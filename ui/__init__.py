@@ -1,1 +1,1 @@
-"""UI package for AEGIS demos."""
+"""AEGIS Streamlit UI package."""
