@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import html
 
 import streamlit as st
@@ -8,10 +9,19 @@ from shared.state import app_state
 from ui.theme import hud_label, source_dot
 
 
+def _pending_created_at(pending) -> float:
+    created_at = getattr(pending, "created_at", None)
+    if not isinstance(created_at, datetime):
+        return 0.0
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at.timestamp()
+
+
 def pending_panel() -> None:
     pending_suggestions = sorted(
         app_state.get_pending_suggestions(),
-        key=lambda pending: pending.created_at,
+        key=_pending_created_at,
         reverse=True,
     )
 

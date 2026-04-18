@@ -40,6 +40,8 @@ from ui.theme import (
 
 
 def _ensure_seeded() -> None:
+    if st.session_state.get("_demo_mode_selection") == "Live Vision":
+        return
     if not app_state.get_roster():
         from scripts.seed_fake_data import seed
 

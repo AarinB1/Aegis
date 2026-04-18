@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from shared.state import app_state
 from scripts.seed_fake_data import seed
 from ui.components.demo_player import DemoPlayer, DemoPlayerError
+from ui.components.live_vision_player import DEFAULT_HERO_VIDEO, LiveVisionPlayer, LiveVisionPlayerError
 from ui.theme import hud_label
 
 DEMO_SCENARIOS = {
@@ -21,7 +22,13 @@ DEMO_SCENARIOS = {
         "script_path": ROOT / "scripts" / "demo_scenarios" / "mascal_90s.json",
         "duration": 90.0,
     },
+    "Live Vision": {
+        "video_path": DEFAULT_HERO_VIDEO,
+        "duration": None,
+    },
 }
+
+PLAYER_TYPES = (DemoPlayer, LiveVisionPlayer)
 
 
 def _format_demo_seconds(seconds: float) -> str:
@@ -29,9 +36,9 @@ def _format_demo_seconds(seconds: float) -> str:
     return f"00:{clipped:04.1f}"
 
 
-def _get_demo_player() -> DemoPlayer | None:
+def _get_demo_player() -> DemoPlayer | LiveVisionPlayer | None:
     player = st.session_state.get("demo_player")
-    return player if isinstance(player, DemoPlayer) else None
+    return player if isinstance(player, PLAYER_TYPES) else None
 
 
 def _clear_demo_player() -> None:
@@ -45,18 +52,25 @@ def _stop_demo_player() -> None:
     _clear_demo_player()
 
 
-def _status_text(player: DemoPlayer | None, selection: str) -> str:
+def _status_text(player: DemoPlayer | LiveVisionPlayer | None, selection: str) -> str:
     if player is None or selection == "Off":
         return "Idle"
 
     status = player.status
-    total = DEMO_SCENARIOS.get(selection, {}).get("duration", player.duration)
+    scenario = DEMO_SCENARIOS.get(selection) or {}
+    total = scenario.get("duration")
+    if total is None and hasattr(player, "duration"):
+        total = getattr(player, "duration")
     elapsed = _format_demo_seconds(status["t"])
-    total_text = _format_demo_seconds(float(total))
+    total_text = _format_demo_seconds(float(total)) if total is not None else None
 
     if status["state"] == "playing":
+        if total_text is None:
+            return f"Playing · {elapsed}"
         return f"Playing · {elapsed} / {total_text}"
     if status["state"] == "paused":
+        if total_text is None:
+            return f"Paused · {elapsed}"
         return f"Paused · {elapsed} / {total_text}"
     return "Idle"
 
@@ -87,7 +101,7 @@ def controls() -> None:
         <div class="sidebar-section">
             <div class="card-kicker">{hud_label("Demo Mode")}</div>
             <div class="sidebar-meta">
-                Same-process safety net for rehearsals and live fallback. Play resumes when paused.
+                Same-process safety net for rehearsals and live fallback. Scripted mode stays intact while Live Vision runs the real pipeline through the shared state spine.
             </div>
         </div>
         """,
@@ -120,13 +134,19 @@ def controls() -> None:
             elif player is None:
                 scenario = DEMO_SCENARIOS[demo_mode]
                 try:
-                    player = DemoPlayer(
-                        video_path=scenario["video_path"],
-                        script_path=scenario["script_path"],
-                    )
+                    if demo_mode == "Scripted MASCAL (90s)":
+                        player = DemoPlayer(
+                            video_path=scenario["video_path"],
+                            script_path=scenario["script_path"],
+                        )
+                    elif demo_mode == "Live Vision":
+                        app_state._reset_for_tests()
+                        player = LiveVisionPlayer(video_path=scenario["video_path"])
+                    else:
+                        raise DemoPlayerError(f"Unsupported demo mode: {demo_mode}")
                     st.session_state["demo_player"] = player
                     player.start()
-                except DemoPlayerError as exc:
+                except (DemoPlayerError, LiveVisionPlayerError) as exc:
                     st.session_state["demo_error"] = str(exc)
                     _clear_demo_player()
             elif status["state"] == "paused":
@@ -136,7 +156,7 @@ def controls() -> None:
             st.rerun()
 
     with pause_col:
-        pause_disabled = player is None or status["state"] != "playing"
+        pause_disabled = player is None or status["state"] != "playing" or demo_mode == "Live Vision"
         if st.button("Pause", width="stretch", disabled=pause_disabled):
             player.pause()
             st.rerun()
