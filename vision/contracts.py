@@ -59,11 +59,38 @@ class MobileVisionResponse(BaseModel):
     summary: VisionSummary
 
 
+class PrioritizedCasualty(BaseModel):
+    alias: str
+    track_id: int = Field(ge=0)
+    priority_suggestion: PrioritySuggestion
+    overall_severity: float = Field(ge=0.0, le=1.0)
+    wound_count: int = Field(ge=0)
+    bleeding_wound_count: int = Field(ge=0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    attention_score: float = Field(ge=0.0, le=1.0)
+    rationale: str
+    bbox: tuple[int, int, int, int]
+
+
+class SceneSummary(BaseModel):
+    tracked_casualties: int = Field(ge=0)
+    casualties_with_wounds: int = Field(ge=0)
+    immediate_casualties: int = Field(ge=0)
+    delayed_casualties: int = Field(ge=0)
+    minimal_casualties: int = Field(ge=0)
+    top_casualty_alias: Optional[str] = None
+    top_casualty_priority: PrioritySuggestion = "GREEN"
+    top_casualty_score: float = Field(ge=0.0, le=1.0)
+    top_casualty_rationale: str = ""
+    top_casualties: List[PrioritizedCasualty] = Field(default_factory=list)
+
+
 class VideoFrameResult(BaseModel):
     frame_index: int = Field(ge=0)
     timestamp_ms: int = Field(ge=0)
     analysis: WoundAnalysisResult
     summary: VisionSummary
+    scene_summary: SceneSummary
 
 
 class VideoSummary(BaseModel):
@@ -78,6 +105,11 @@ class VideoSummary(BaseModel):
     processed_frame_count: int = Field(ge=0)
     priority_suggestion: PrioritySuggestion
     detection_mode: str
+    peak_tracked_casualties: int = Field(ge=0)
+    peak_casualties_with_wounds: int = Field(ge=0)
+    peak_immediate_casualties: int = Field(ge=0)
+    focus_casualty_alias: Optional[str] = None
+    focus_casualty_priority: PrioritySuggestion = "GREEN"
 
 
 class VideoAnalysisResult(BaseModel):
@@ -89,4 +121,5 @@ class VideoAnalysisResult(BaseModel):
     frame_stride: int = Field(ge=1)
     duration_ms: int = Field(ge=0)
     summary: VideoSummary
+    scene_summary: SceneSummary
     frames: List[VideoFrameResult]

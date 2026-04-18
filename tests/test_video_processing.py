@@ -7,6 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from vision.demo_profiles import get_demo_profile
 from vision.video_processing import VideoProcessor
 from vision.wound_detection import WoundAnalyzer
 
@@ -94,6 +95,116 @@ class FakeAnalyzer:
         return "heuristic"
 
 
+class MultiCasualtyFakeAnalyzer:
+    def detect_person_rois(self, image):
+        return [(10, 20, 70, 90), (120, 30, 70, 90)]
+
+    def analyze_image(self, image, pixels_per_cm=None):
+        return {
+            "wounds_detected": True,
+            "wound_count": 2,
+            "wounds": [
+                {
+                    "location": {"x": 28, "y": 48, "width": 24, "height": 28},
+                    "severity": 0.86,
+                    "type": "laceration",
+                    "location_type": "torso",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 16.2,
+                    "confidence": 0.93,
+                    "mask_area_px": 670,
+                    "notes": "critical wound",
+                },
+                {
+                    "location": {"x": 142, "y": 56, "width": 18, "height": 20},
+                    "severity": 0.31,
+                    "type": "burn",
+                    "location_type": "limb",
+                    "bleeding": False,
+                    "bleeding_detected": False,
+                    "size_cm2": 6.2,
+                    "confidence": 0.81,
+                    "mask_area_px": 310,
+                    "notes": "secondary wound",
+                },
+            ],
+            "overall_severity": 1.0,
+            "priority_suggestion": "RED",
+            "confidence": 0.9,
+            "image_quality": 0.88,
+        }
+
+    def detection_mode(self):
+        return "heuristic"
+
+
+class BlinkingFakeAnalyzer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def detect_person_rois(self, image):
+        return [(0, 0, image.shape[1], image.shape[0])]
+
+    def analyze_image(self, image, pixels_per_cm=None):
+        responses = [
+            [
+                {
+                    "location": {"x": 32, "y": 40, "width": 24, "height": 24},
+                    "severity": 0.7,
+                    "type": "laceration",
+                    "location_type": "torso",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 12.0,
+                    "confidence": 0.88,
+                    "mask_area_px": 480,
+                    "notes": "stable wound",
+                }
+            ],
+            [
+                {
+                    "location": {"x": 34, "y": 42, "width": 24, "height": 24},
+                    "severity": 0.72,
+                    "type": "laceration",
+                    "location_type": "torso",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 12.4,
+                    "confidence": 0.9,
+                    "mask_area_px": 492,
+                    "notes": "stable wound",
+                },
+                {
+                    "location": {"x": 120, "y": 20, "width": 20, "height": 18},
+                    "severity": 0.44,
+                    "type": "abrasion",
+                    "location_type": "limb",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 4.2,
+                    "confidence": 0.86,
+                    "mask_area_px": 210,
+                    "notes": "transient false positive",
+                },
+            ],
+        ]
+        wounds = responses[min(self.calls, len(responses) - 1)]
+        self.calls += 1
+        return {
+            "wounds_detected": True,
+            "wound_count": len(wounds),
+            "wounds": wounds,
+            "overall_severity": 0.8,
+            "priority_suggestion": "RED",
+            "confidence": 0.9,
+            "image_quality": 0.92,
+        }
+
+    def detection_mode(self):
+        return "heuristic"
+
+
 class VideoProcessingTests(unittest.TestCase):
     def test_recv_updates_state_and_keeps_track_stable(self) -> None:
         fake_state = FakeState()
@@ -118,6 +229,7 @@ class VideoProcessingTests(unittest.TestCase):
         self.assertEqual(len(fake_state.suggestions), 1)
         self.assertIsNotNone(fake_state.latest_frame)
         self.assertEqual(processor.last_result["casualties"][0]["alias"], "A1")
+        self.assertEqual(processor.last_result["scene_summary"]["top_casualty_alias"], "A1")
 
     def test_video_processor_writes_annotated_video_and_frame_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,6 +285,99 @@ class VideoProcessingTests(unittest.TestCase):
             payload = json.loads(json_path.read_text())
             self.assertGreaterEqual(payload["processed_frames"], 1)
             self.assertIn("summary", payload)
+            self.assertIn("scene_summary", payload)
+
+    def test_scene_summary_prioritizes_highest_risk_casualty(self) -> None:
+        processor = VideoProcessor(MultiCasualtyFakeAnalyzer())
+        frame = np.full((160, 240, 3), 150, dtype=np.uint8)
+
+        annotated = processor.recv(frame)
+
+        self.assertEqual(annotated.shape, frame.shape)
+        self.assertIsNotNone(processor.last_result)
+        scene_summary = processor.last_result["scene_summary"]
+        self.assertEqual(scene_summary["tracked_casualties"], 2)
+        self.assertEqual(scene_summary["top_casualty_alias"], "A1")
+        self.assertEqual(scene_summary["top_casualty_priority"], "RED")
+        self.assertGreater(scene_summary["top_casualty_score"], 0.7)
+        self.assertIn("active bleeding", scene_summary["top_casualty_rationale"])
+
+    def test_cached_render_reuses_last_detection_state(self) -> None:
+        processor = VideoProcessor(FakeAnalyzer())
+        frame = np.full((160, 240, 3), 150, dtype=np.uint8)
+
+        processor.recv(frame)
+        cached = processor._render_cached_frame(frame, frame_index=1)
+        idle = processor._decorate_idle_frame(frame, frame_index=1)
+
+        self.assertEqual(cached.shape, frame.shape)
+        self.assertFalse(np.array_equal(cached, idle))
+
+    def test_recv_with_analysis_roi_returns_cropped_frame(self) -> None:
+        processor = VideoProcessor(FakeAnalyzer(), analysis_roi=(20, 30, 80, 60))
+        frame = np.full((160, 240, 3), 150, dtype=np.uint8)
+
+        annotated = processor.recv(frame)
+
+        self.assertEqual(annotated.shape, (60, 80, 3))
+
+    def test_demo_profile_lookup_returns_expected_profile(self) -> None:
+        profile = get_demo_profile("DOD_111088902_12_18_hero.mp4")
+
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile.name, "hero_casualty_closeup")
+        self.assertEqual(profile.roi, (300, 50, 1200, 980))
+        self.assertEqual(profile.clip_window_seconds, (2.9, 5.9))
+
+    def test_temporal_stabilization_filters_transient_extra_wound(self) -> None:
+        processor = VideoProcessor(BlinkingFakeAnalyzer())
+        frame = np.full((160, 240, 3), 150, dtype=np.uint8)
+
+        processor.recv(frame)
+        processor.recv(frame)
+
+        self.assertIsNotNone(processor.last_result)
+        analysis = processor.last_result["analysis"]
+        self.assertEqual(analysis["wound_count"], 1)
+        self.assertEqual(len(analysis["wounds"]), 1)
+
+    def test_process_video_clip_window_shortens_output_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            video_path = tmp_path / "input.avi"
+            self._write_test_video(video_path)
+
+            processor = VideoProcessor(WoundAnalyzer())
+            result = processor.process_video(
+                video_path,
+                output_dir=tmp_path / "outputs",
+                pixels_per_cm=10.0,
+                frame_stride=1,
+                start_seconds=0.0,
+                end_seconds=0.5,
+            )
+
+            self.assertLess(result["frame_count"], 6)
+            self.assertLess(result["duration_ms"], 1000)
+
+    def test_process_video_clip_window_restarts_stride_from_window_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            video_path = tmp_path / "input.avi"
+            self._write_test_video(video_path)
+
+            processor = VideoProcessor(WoundAnalyzer())
+            result = processor.process_video(
+                video_path,
+                output_dir=tmp_path / "outputs",
+                pixels_per_cm=10.0,
+                frame_stride=2,
+                start_seconds=0.2,
+                end_seconds=0.7,
+            )
+
+            self.assertGreaterEqual(len(result["frames"]), 1)
+            self.assertEqual(result["frames"][0]["frame_index"], 0)
 
     def _write_test_video(self, path: Path) -> None:
         writer = cv2.VideoWriter(

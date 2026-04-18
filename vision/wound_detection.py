@@ -288,6 +288,11 @@ class WoundAnalyzer:
                 )
             )
 
+        candidates = [
+            candidate
+            for candidate in candidates
+            if self._is_plausible_candidate(candidate, image_shape=(image_height, image_width))
+        ]
         candidates.sort(key=lambda candidate: candidate.area_px, reverse=True)
         if candidates:
             largest_area = candidates[0].area_px
@@ -400,6 +405,35 @@ class WoundAnalyzer:
             mask_area_px=candidate.area_px,
             notes=self._build_notes(wound_type, bleeding, size_cm2, location_type),
         )
+
+    def _is_plausible_candidate(
+        self,
+        candidate: CandidateRegion,
+        *,
+        image_shape: Tuple[int, int],
+    ) -> bool:
+        image_height, image_width = image_shape
+        x, y, w, h = candidate.bbox
+        bbox_area = max(w * h, 1)
+        fill_ratio = candidate.area_px / bbox_area
+        elongated_ratio = max(w / max(h, 1), h / max(w, 1))
+        wound_type = self._classify_wound_type(candidate)
+        touches_border = (
+            x <= 1
+            or y <= 1
+            or (x + w) >= image_width - 1
+            or (y + h) >= image_height - 1
+        )
+
+        # Suppress long, sparse fabric folds and straps that can appear red/orange
+        # under harsh lighting but do not have wound-like coverage.
+        if wound_type in {"burn", "laceration", "abrasion", "unknown"}:
+            if fill_ratio < 0.24 and elongated_ratio > 1.9:
+                return False
+            if touches_border and fill_ratio < 0.24 and candidate.orange_ratio > 0.55:
+                return False
+
+        return True
 
     def _classify_wound_type(self, candidate: CandidateRegion) -> str:
         blue, green, red = candidate.mean_bgr

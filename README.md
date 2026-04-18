@@ -32,6 +32,9 @@ AEGIS acts as a silent second set of eyes and ears for the medic:
 
 - 🩸 **Wound detection & segmentation** — MobileSAM + Grounding DINO identify
   and measure wounds in real time, flagging active hemorrhage
+- 🚑 **Scene-level casualty prioritization** — video processing ranks visible
+  casualties by bleeding burden, severity, and attention score so the medic
+  can focus on the highest-risk patient first
 - 🫁 **Respiratory monitoring** — Zero-shot CLAP audio classification detects
   stridor, gurgling, agonal breathing, and absent respirations
 - 👥 **Casualty detection & tracking** — YOLOv8 + ByteTrack + DINOv2 re-ID
@@ -204,6 +207,8 @@ The video script produces:
 - An annotated demo video
 - A per-frame JSON timeline with wound detections
 - A video-level summary for triage and presentation use
+- A MASCAL scene HUD with tracked-casualty counts, recommended focus
+  casualty, and ranked attention overlay
 
 For the merge contract used by the other teammates, see `docs/person1_handoff.md`.
 

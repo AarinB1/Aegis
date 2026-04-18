@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from vision.video_processing import VideoProcessor
+from vision.demo_profiles import get_demo_profile, parse_roi
 from vision.wound_detection import WoundAnalyzer
 
 
@@ -28,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--frame-stride",
         type=int,
-        default=3,
+        default=None,
         help="Analyze every Nth frame to keep runtime practical for demo footage",
     )
     parser.add_argument(
@@ -49,6 +50,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("models/mobile_sam.pt"),
         help="Path to SAM checkpoint",
     )
+    parser.add_argument(
+        "--demo-profile",
+        choices=("none", "auto"),
+        default="none",
+        help="Use a clip-specific demo optimization profile when one is available",
+    )
+    parser.add_argument(
+        "--roi",
+        type=str,
+        default=None,
+        help="Optional manual crop as x,y,width,height to focus the analysis on a casualty region",
+    )
+    parser.add_argument(
+        "--start-seconds",
+        type=float,
+        default=None,
+        help="Optional start time offset for processing a subclip",
+    )
+    parser.add_argument(
+        "--end-seconds",
+        type=float,
+        default=None,
+        help="Optional end time offset for processing a subclip",
+    )
     return parser
 
 
@@ -60,18 +85,43 @@ def main() -> None:
         yolo_weights=str(args.yolo_weights) if args.yolo_weights.exists() else None,
         sam_checkpoint=str(args.sam_checkpoint) if args.sam_checkpoint.exists() else None,
     )
-    processor = VideoProcessor(analyzer)
+    demo_profile = get_demo_profile(args.video) if args.demo_profile == "auto" else None
+    analysis_roi = parse_roi(args.roi) if args.roi else None
+    if analysis_roi is None and demo_profile is not None:
+        analysis_roi = demo_profile.roi
+    frame_stride = args.frame_stride if args.frame_stride is not None else (
+        demo_profile.recommended_frame_stride if demo_profile is not None else 3
+    )
+    start_seconds = args.start_seconds
+    end_seconds = args.end_seconds
+    if demo_profile is not None and demo_profile.clip_window_seconds is not None:
+        if start_seconds is None:
+            start_seconds = demo_profile.clip_window_seconds[0]
+        if end_seconds is None:
+            end_seconds = demo_profile.clip_window_seconds[1]
+
+    processor = VideoProcessor(analyzer, analysis_roi=analysis_roi)
     result = processor.process_video(
         args.video,
         output_dir=args.output_dir,
         pixels_per_cm=args.pixels_per_cm,
-        frame_stride=args.frame_stride,
+        frame_stride=frame_stride,
         max_frames=args.max_frames,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
     )
 
     json_path = args.output_dir / f"{args.video.stem}_video_wounds.json"
     json_path.write_text(json.dumps(result, indent=2))
 
+    if demo_profile is not None:
+        print(f"demo-profile: {demo_profile.name}")
+        if demo_profile.note:
+            print(f"demo-note: {demo_profile.note}")
+    if analysis_roi is not None:
+        print(f"roi: {analysis_roi}")
+    if start_seconds is not None or end_seconds is not None:
+        print(f"clip-window: start={start_seconds or 0.0}s end={end_seconds if end_seconds is not None else 'full'}")
     print(f"json: {json_path}")
     if result["annotated_video"]:
         print(f"video: {result['annotated_video']}")
