@@ -209,6 +209,20 @@ For the merge contract used by the other teammates, see `docs/person1_handoff.md
 
 ---
 
+## Demo Mode
+
+For rehearsals or as a safety net if any live pipeline is unavailable:
+
+1. `streamlit run ui/app.py`
+2. In the sidebar, set Demo Mode to `"Scripted MASCAL (90s)"`
+3. Click `Play`
+
+The dashboard will play a pre-recorded video and fire scripted suggestions,
+voice commands, and a MEDEVAC trigger over a 90-second loop. Zero external
+dependencies.
+
+---
+
 ## Voice Commands
 
 Hold spacebar to speak. Supported commands:

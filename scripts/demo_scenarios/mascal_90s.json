@@ -1,0 +1,149 @@
+{
+  "name": "MASCAL 90-second demo",
+  "description": "Three casualties, escalating triage, airway management, and one MEDEVAC request.",
+  "events": [
+    {
+      "at": 0.0,
+      "type": "reset"
+    },
+    {
+      "at": 0.5,
+      "type": "seed"
+    },
+    {
+      "at": 3.0,
+      "type": "suggestion",
+      "source": "vision",
+      "casualty_id": "A2",
+      "text": "A2: suspected penetrating wound, left thigh, active bleeding",
+      "confidence": 0.91
+    },
+    {
+      "at": 6.0,
+      "type": "voice",
+      "state": "listening",
+      "transcription": "red tag A2"
+    },
+    {
+      "at": 7.2,
+      "type": "voice",
+      "state": "confirmed",
+      "transcription": "red tag A2"
+    },
+    {
+      "at": 7.5,
+      "type": "triage_update",
+      "casualty_id": "A2",
+      "triage_category": "IMMEDIATE"
+    },
+    {
+      "at": 12.0,
+      "type": "suggestion",
+      "source": "audio",
+      "casualty_id": "A1",
+      "text": "A1: stridor detected, suspected airway compromise",
+      "confidence": 0.87
+    },
+    {
+      "at": 16.0,
+      "type": "voice",
+      "state": "listening",
+      "transcription": "airway adjunct A1"
+    },
+    {
+      "at": 17.8,
+      "type": "intervention",
+      "casualty_id": "A1",
+      "intervention_type": "npa",
+      "location": "nasopharyngeal_airway",
+      "source": "voice_command",
+      "confirmed_by_medic": true
+    },
+    {
+      "at": 24.0,
+      "type": "suggestion",
+      "source": "fusion",
+      "casualty_id": "A3",
+      "text": "A3: ambulatory response absent, manual reassessment recommended",
+      "confidence": 0.72
+    },
+    {
+      "at": 32.0,
+      "type": "voice",
+      "state": "listening",
+      "transcription": "yellow tag A3"
+    },
+    {
+      "at": 33.1,
+      "type": "voice",
+      "state": "confirmed",
+      "transcription": "yellow tag A3"
+    },
+    {
+      "at": 33.4,
+      "type": "triage_update",
+      "casualty_id": "A3",
+      "triage_category": "DELAYED"
+    },
+    {
+      "at": 41.0,
+      "type": "intervention",
+      "casualty_id": "A2",
+      "intervention_type": "tourniquet",
+      "location": "left_thigh_proximal",
+      "source": "manual",
+      "confirmed_by_medic": true
+    },
+    {
+      "at": 48.0,
+      "type": "suggestion",
+      "source": "vision",
+      "casualty_id": "A2",
+      "text": "A2: hemorrhage control improving after intervention; maintain IMMEDIATE priority",
+      "confidence": 0.84
+    },
+    {
+      "at": 57.0,
+      "type": "voice",
+      "state": "listening",
+      "transcription": "prepare medevac A2"
+    },
+    {
+      "at": 58.5,
+      "type": "voice",
+      "state": "confirmed",
+      "transcription": "prepare medevac A2"
+    },
+    {
+      "at": 70.0,
+      "type": "medevac",
+      "casualty_id": "A2",
+      "nine_line": {
+        "location": "GRID 38TKL 042 119",
+        "callsign": "DUSTOFF-3",
+        "frequency": "45.50",
+        "patients_by_precedence": "A x2 B x1",
+        "special_equipment": "ventilator",
+        "patients_by_type": "L x2 A x1",
+        "security": "possible enemy",
+        "marking": "smoke green",
+        "nationality": "US military",
+        "nbc": "none"
+      }
+    },
+    {
+      "at": 76.0,
+      "type": "suggestion",
+      "source": "audio",
+      "casualty_id": "A1",
+      "text": "A1: respiratory sounds improved after airway intervention",
+      "confidence": 0.78
+    },
+    {
+      "at": 90.0,
+      "type": "voice",
+      "state": "idle",
+      "transcription": ""
+    }
+  ]
+}
