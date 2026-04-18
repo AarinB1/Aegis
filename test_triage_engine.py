@@ -1,260 +1,294 @@
-# test_triage_engine.py - Ready-to-run tests for when shared modules are available
+# test_triage_engine.py - Real integration tests for Person 3 (Ansh) triage engine
+# Tests against the team's actual schema.py and shared/state.py.
+# Run: python3 test_triage_engine.py
 
-"""
-Test script for Person 3 (Ansh) triage engine
-Run this once Aarin provides shared/state.py and schema.py
-"""
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
 
-def test_triage_engine():
-    """Test the triage engine with mock casualty data"""
-    
-    # This will work once shared modules are available
-    try:
-        from shared.state import app_state
-        from schema import Casualty, Wound, TriageCategory
-        from triage_engine import TriageEngine
-        
-        print("✅ All modules imported successfully!")
-        
-        # Initialize engine
-        engine = TriageEngine()
-        print("✅ Triage engine initialized")
-        
-        # Create test casualty with wounds
-        test_casualty = Casualty(
-            id="TEST_001",
-            track_id="T1",
-            wounds=[
-                Wound(
-                    location={'x': 150, 'y': 200},
-                    severity=0.8,
-                    type="laceration",
-                    body_region="torso",
-                    bleeding=True,
-                    size_cm2=12.5,
-                    confidence=0.9
-                )
-            ],
-            triage_category=None,  # Not assigned yet
-            timestamp=datetime.now()
-        )
-        
-        # Add to AppState
-        app_state.upsert_casualty(test_casualty)
-        print("✅ Test casualty added to AppState")
-        
-        # Test triage analysis
-        suggestion = engine.analyze_casualty(test_casualty)
-        if suggestion:
-            print(f"✅ Triage suggestion generated:")
-            print(f"   Priority: {suggestion.suggested_category}")
-            print(f"   Confidence: {suggestion.confidence:.2f}")
-            print(f"   Reasoning: {suggestion.reasoning}")
-        
-        # Test MEDEVAC generation
-        nine_line = engine.generate_medevac_9_line("TEST_001")
-        if nine_line:
-            print("✅ MEDEVAC 9-line generated:")
-            for key, value in nine_line.items():
-                print(f"   {key}: {value}")
-        
-        # Test database persistence
-        interventions = engine.get_casualty_interventions("TEST_001")
-        print(f"✅ Database integration working: {len(interventions)} interventions found")
-        
-        print("\n🎉 ALL TESTS PASSED - Your triage engine is ready!")
-        
-    except ImportError as e:
-        print(f"⏳ Waiting for shared modules: {e}")
-        print("Run this again once Aarin provides shared/state.py and schema.py")
-        return False
-    except Exception as e:
-        print(f"❌ Test failed: {e}")
-        return False
-    
-    return True
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-def test_scoring_algorithm():
-    """Test the medical scoring algorithm with different scenarios"""
-    
-    print("\n🧪 Testing Medical Scoring Algorithm:")
-    
-    # Test scenarios
-    scenarios = [
-        {
-            'name': 'Severe Torso Laceration with Bleeding',
-            'evidence': {
-                'wounds': [
-                    {
-                        'type': 'laceration',
-                        'severity': 0.9,
-                        'bleeding': True,
-                        'location': 'torso',
-                        'size_cm2': 15.0,
-                        'confidence': 0.95
-                    }
-                ],
-                'audio_findings': [
-                    {
-                        'classification': 'DISTRESS',
-                        'confidence': 0.85
-                    }
-                ],
-                'interventions': []
-            },
-            'expected_priority': 'RED'
-        },
-        {
-            'name': 'Multiple Minor Limb Wounds',
-            'evidence': {
-                'wounds': [
-                    {
-                        'type': 'abrasion',
-                        'severity': 0.3,
-                        'bleeding': False,
-                        'location': 'arm',
-                        'size_cm2': 3.0,
-                        'confidence': 0.8
-                    },
-                    {
-                        'type': 'bruise',
-                        'severity': 0.2,
-                        'bleeding': False,
-                        'location': 'leg',
-                        'size_cm2': 5.0,
-                        'confidence': 0.9
-                    }
-                ],
-                'audio_findings': [
-                    {
-                        'classification': 'NORMAL',
-                        'confidence': 0.9
-                    }
-                ],
-                'interventions': []
-            },
-            'expected_priority': 'GREEN'
-        },
-        {
-            'name': 'Head Wound with Normal Vitals',
-            'evidence': {
-                'wounds': [
-                    {
-                        'type': 'laceration',
-                        'severity': 0.6,
-                        'bleeding': True,
-                        'location': 'head',
-                        'size_cm2': 8.0,
-                        'confidence': 0.85
-                    }
-                ],
-                'audio_findings': [
-                    {
-                        'classification': 'NORMAL',
-                        'confidence': 0.8
-                    }
-                ],
-                'interventions': []
-            },
-            'expected_priority': 'YELLOW'  # Head wounds get priority
-        }
+from schema import (
+    AISuggestion, Casualty, Intervention,
+    RespiratoryStatus, TriageCategory, Wound,
+)
+from shared.state import app_state
+from triage_engine import TriageEngine
+
+
+def _reset():
+    app_state._reset_for_tests()
+
+
+def _print_header(text):
+    print("\n" + "=" * 60)
+    print(text)
+    print("=" * 60)
+
+
+def _print_result(label, passed, detail=""):
+    mark = "PASS" if passed else "FAIL"
+    line = f"[{mark}] {label}"
+    if detail:
+        line += f"  --  {detail}"
+    print(line)
+
+
+def _make_casualty(casualty_id, wounds, *,
+                   respiratory_status=RespiratoryStatus.NORMAL,
+                   respiratory_rate=16, responsive=True,
+                   triage_category=TriageCategory.UNASSESSED):
+    return Casualty(
+        casualty_id=casualty_id,
+        triage_category=triage_category,
+        responsive=responsive,
+        respiratory_status=respiratory_status,
+        respiratory_rate=respiratory_rate,
+        wounds=wounds,
+    )
+
+
+def test_red_severe_bleeding_thigh():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("A1", wounds=[
+        Wound(location="right_thigh", area_cm2=33.0, severity="severe",
+              active_bleeding=True, ai_confidence=0.9)
+    ])
+    app_state.upsert_casualty(casualty)
+    evidence = engine.gather_evidence(casualty)
+    scores = engine.calculate_triage_scores(evidence)
+    priority = engine.determine_priority(scores)
+    _print_result("Severe bleeding thigh -> IMMEDIATE",
+                  priority == TriageCategory.IMMEDIATE,
+                  f"priority={priority.value}, total={scores['total_score']:.1f}")
+    return priority == TriageCategory.IMMEDIATE
+
+
+def test_red_head_wound():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("A2", wounds=[
+        Wound(location="head", area_cm2=8.0, severity="moderate",
+              active_bleeding=True, ai_confidence=0.85)
+    ])
+    app_state.upsert_casualty(casualty)
+    evidence = engine.gather_evidence(casualty)
+    scores = engine.calculate_triage_scores(evidence)
+    priority = engine.determine_priority(scores)
+    _print_result("Head wound with bleeding -> IMMEDIATE",
+                  priority == TriageCategory.IMMEDIATE,
+                  f"priority={priority.value}, location_score={scores['location_score']}")
+    return priority == TriageCategory.IMMEDIATE
+
+
+def test_yellow_moderate_chest():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("A3", wounds=[
+        Wound(location="left_chest", area_cm2=6.3, severity="moderate",
+              active_bleeding=False, ai_confidence=0.82)
+    ], respiratory_rate=20)
+    app_state.upsert_casualty(casualty)
+    evidence = engine.gather_evidence(casualty)
+    scores = engine.calculate_triage_scores(evidence)
+    priority = engine.determine_priority(scores)
+    _print_result("Moderate chest, stable -> DELAYED",
+                  priority == TriageCategory.DELAYED,
+                  f"priority={priority.value}, total={scores['total_score']:.1f}")
+    return priority == TriageCategory.DELAYED
+
+
+def test_green_minor_limb():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("A4", wounds=[
+        Wound(location="right_forearm", area_cm2=2.0, severity="minor",
+              active_bleeding=False, ai_confidence=0.75)
+    ])
+    app_state.upsert_casualty(casualty)
+    evidence = engine.gather_evidence(casualty)
+    scores = engine.calculate_triage_scores(evidence)
+    priority = engine.determine_priority(scores)
+    _print_result("Minor limb wound -> MINIMAL",
+                  priority == TriageCategory.MINIMAL,
+                  f"priority={priority.value}, total={scores['total_score']:.1f}")
+    return priority == TriageCategory.MINIMAL
+
+
+def test_never_expectant():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("A5", wounds=[
+        Wound(location="head", area_cm2=50.0, severity="severe",
+              active_bleeding=True, ai_confidence=0.95),
+        Wound(location="chest", area_cm2=40.0, severity="severe",
+              active_bleeding=True, ai_confidence=0.95),
+    ], respiratory_status=RespiratoryStatus.ABSENT,
+       respiratory_rate=0, responsive=False)
+    evidence = engine.gather_evidence(casualty)
+    scores = engine.calculate_triage_scores(evidence)
+    priority = engine.determine_priority(scores)
+    is_safe = priority not in (TriageCategory.EXPECTANT, TriageCategory.DECEASED)
+    _print_result("Never auto-suggests EXPECTANT/DECEASED", is_safe,
+                  f"worst-case priority={priority.value}")
+    return is_safe
+
+
+def test_analyze_casualty_creates_suggestion():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("A6", wounds=[
+        Wound(location="right_thigh", area_cm2=33.0, severity="severe",
+              active_bleeding=True, ai_confidence=0.9)
+    ])
+    app_state.upsert_casualty(casualty)
+    suggestion = engine.analyze_casualty(casualty)
+    passed = (suggestion is not None
+              and isinstance(suggestion, AISuggestion)
+              and 0.0 <= suggestion.confidence <= 1.0
+              and len(casualty.ai_suggestions_log) >= 1)
+    detail = f"confidence={suggestion.confidence:.2f}, source={suggestion.source}" if suggestion else "none"
+    _print_result("analyze_casualty produces AISuggestion", passed, detail)
+    if suggestion:
+        print(f"       Llama reasoning: {suggestion.suggestion}")
+    return passed
+
+
+def test_process_all_casualties_flow():
+    _reset()
+    engine = TriageEngine()
+    casualties = [
+        _make_casualty("B1", [Wound(location="head", area_cm2=8.0, severity="severe",
+                                    active_bleeding=True, ai_confidence=0.9)]),
+        _make_casualty("B2", [Wound(location="left_arm", area_cm2=3.0, severity="minor",
+                                    active_bleeding=False, ai_confidence=0.7)]),
+        _make_casualty("B3", [Wound(location="abdomen", area_cm2=10.0, severity="moderate",
+                                    active_bleeding=True, ai_confidence=0.85)]),
     ]
-    
-    # Test each scenario
-    for scenario in scenarios:
-        print(f"\n📋 Scenario: {scenario['name']}")
-        
-        try:
-            from triage_engine import TriageEngine
-            engine = TriageEngine()
-            
-            # Calculate scores
-            scores = engine.calculate_triage_scores(scenario['evidence'])
-            priority = engine.determine_priority(scores)
-            reasoning = engine.generate_reasoning(scenario['evidence'], scores)
-            confidence = engine.calculate_confidence(scenario['evidence'], scores)
-            
-            print(f"   Scores: {scores}")
-            print(f"   Priority: {priority}")
-            print(f"   Expected: {scenario['expected_priority']}")
-            print(f"   Confidence: {confidence:.2f}")
-            print(f"   Reasoning: {reasoning}")
-            
-            if str(priority) == scenario['expected_priority']:
-                print("   ✅ CORRECT")
-            else:
-                print("   ⚠️ UNEXPECTED (but may be valid due to conservative bias)")
-                
-        except ImportError:
-            print("   ⏳ Waiting for shared modules to test fully")
-        except Exception as e:
-            print(f"   ❌ Error: {e}")
+    for c in casualties:
+        app_state.upsert_casualty(c)
+    engine.process_all_casualties()
+    pending = app_state.get_pending_suggestions()
+    triage_suggestions = [s for s in pending if "triage" in s.source.lower()]
+    passed = len(triage_suggestions) >= 3
+    _print_result("process_all_casualties -> 1 suggestion per casualty",
+                  passed, f"{len(triage_suggestions)}/3 suggestions created")
+    return passed
 
-def create_quick_start_guide():
-    """Generate a quick start guide for integration"""
-    
-    guide = """
-# PERSON 3 (ANSH) - QUICK START GUIDE
 
-## Once Aarin provides shared modules:
+def test_audio_suggestion_no_crash():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("D1", wounds=[
+        Wound(location="chest", area_cm2=5.0, severity="moderate",
+              active_bleeding=False, ai_confidence=0.8)
+    ])
+    app_state.upsert_casualty(casualty)
+    app_state.add_suggestion(AISuggestion(
+        timestamp=datetime.now(timezone.utc),
+        source="audio",
+        suggestion="D1: Detected AIRWAY COMPROMISE - stridor pattern",
+        confidence=0.87,
+    ))
+    try:
+        suggestion = engine.analyze_casualty(casualty)
+        passed = suggestion is not None
+        _print_result("Handles audio suggestions without crashing", passed)
+        return passed
+    except Exception as e:
+        _print_result("Handles audio suggestions without crashing", False, str(e))
+        return False
 
-1. **Test Integration:**
-   ```bash
-   python test_triage_engine.py
-   ```
 
-2. **Start Your Engine:**
-   ```python
-   from triage_engine import start_triage_engine
-   engine = start_triage_engine()
-   ```
+def test_priority_counts():
+    _reset()
+    engine = TriageEngine()
+    app_state.upsert_casualty(_make_casualty("R1", [Wound(location="thigh", area_cm2=10,
+        severity="minor", active_bleeding=False, ai_confidence=0.8)],
+        triage_category=TriageCategory.IMMEDIATE))
+    app_state.upsert_casualty(_make_casualty("R2", [Wound(location="arm", area_cm2=5,
+        severity="minor", active_bleeding=False, ai_confidence=0.8)],
+        triage_category=TriageCategory.DELAYED))
+    app_state.upsert_casualty(_make_casualty("R3", [Wound(location="forearm", area_cm2=2,
+        severity="minor", active_bleeding=False, ai_confidence=0.8)],
+        triage_category=TriageCategory.MINIMAL))
+    counts_str = engine.get_patient_priority_counts()
+    passed = all(x in counts_str for x in ["RED: 1", "YELLOW: 1", "GREEN: 1"])
+    _print_result("Priority counts match roster", passed, counts_str)
+    return passed
 
-3. **Integration Points:**
-   - Reads: app_state.get_roster(), get_pending_suggestions()
-   - Writes: app_state.add_suggestion(), set_active_medevac()
-   - Never assigns triage directly - always suggestions only
-   - Never suggests BLACK/EXPECTANT (medic-only decision)
 
-4. **Your Deliverables:**
-   - Hour 7: First suggestions flowing ✅
-   - Hour 10: MEDEVAC 9-line working ✅
-   - Conservative medical bias ✅
-   - SQLite persistence ✅
+def test_medevac_9_line():
+    _reset()
+    engine = TriageEngine()
+    casualty = _make_casualty("C1", wounds=[
+        Wound(location="neck", area_cm2=5.0, severity="severe",
+              active_bleeding=True, ai_confidence=0.9)
+    ], triage_category=TriageCategory.IMMEDIATE)
+    app_state.upsert_casualty(casualty)
+    nine_line = engine.generate_medevac_9_line("C1")
+    required = [f"line_{i}_" for i in range(1, 10)]
+    has_all = all(any(k.startswith(r) for k in nine_line.keys()) for r in required)
+    equip = nine_line.get("line_4_special_equipment", "")
+    has_equip = "BLOOD PRODUCTS" in equip and "AIRWAY MANAGEMENT" in equip
+    active = app_state.get_active_medevac()
+    medevac_set = active is not None and active["casualty_id"] == "C1"
+    passed = has_all and has_equip and medevac_set
+    _print_result("MEDEVAC 9-line generation", passed, f"equipment='{equip}'")
+    if passed:
+        print("\n       Generated 9-line:")
+        for k in sorted(nine_line.keys()):
+            if k.startswith("line_"):
+                print(f"          {k}: {nine_line[k]}")
+    return passed
 
-## Voice Command Integration:
-When Neal (Person 2) detects "MEDEVAC [casualty_id]":
-```python
-nine_line = engine.generate_medevac_9_line(casualty_id)
-# Automatically triggers app_state.set_active_medevac()
-```
 
-## Medical Scoring:
-- Wound severity + bleeding + location + respiratory
-- Conservative bias (round up when uncertain)
-- SALT/TCCC protocol compliant
-- Transparent reasoning chains
+def test_medevac_missing():
+    _reset()
+    engine = TriageEngine()
+    result = engine.generate_medevac_9_line("DOES_NOT_EXIST")
+    passed = result == {}
+    _print_result("MEDEVAC for unknown casualty returns {}", passed)
+    return passed
 
-## Ready to integrate! 🚀
-"""
-    
-    with open("QUICK_START_PERSON3.md", "w") as f:
-        f.write(guide)
-    
-    print("📝 Quick start guide created: QUICK_START_PERSON3.md")
+
+def main():
+    print("TRIAGE ENGINE - FULL INTEGRATION TEST SUITE")
+    print("(testing against team's schema.py + shared/state.py)")
+
+    _print_header("TRIAGE CLASSIFICATION")
+    r = []
+    r.append(test_red_severe_bleeding_thigh())
+    r.append(test_red_head_wound())
+    r.append(test_yellow_moderate_chest())
+    r.append(test_green_minor_limb())
+
+    _print_header("SAFETY INVARIANTS")
+    r.append(test_never_expectant())
+
+    _print_header("APPSTATE INTEGRATION")
+    r.append(test_analyze_casualty_creates_suggestion())
+    r.append(test_process_all_casualties_flow())
+    r.append(test_audio_suggestion_no_crash())
+    r.append(test_priority_counts())
+
+    _print_header("MEDEVAC")
+    r.append(test_medevac_9_line())
+    r.append(test_medevac_missing())
+
+    _print_header("SUMMARY")
+    passed = sum(r)
+    total = len(r)
+    print(f"\n  {passed} / {total} tests passed")
+    if passed == total:
+        print("  ALL TESTS PASSED - ready for team integration\n")
+        return 0
+    print(f"  {total - passed} tests failed - review output above\n")
+    return 1
+
 
 if __name__ == "__main__":
-    print("🏥 PERSON 3 (ANSH) - TRIAGE ENGINE VALIDATION")
-    print("=" * 50)
-    
-    # Test scoring algorithm (works without shared modules)
-    test_scoring_algorithm()
-    
-    # Test full integration (needs shared modules)
-    print("\n" + "=" * 50)
-    test_triage_engine()
-    
-    # Create integration guide
-    print("\n" + "=" * 50)
-    create_quick_start_guide()
-    
-    print("\n🎯 Your triage engine is ready for Hour 1 integration!")
+    sys.exit(main())

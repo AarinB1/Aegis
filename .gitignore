@@ -209,3 +209,4 @@ __marimo__/
 # AEGIS local artifacts
 outputs/
 models/
+mascal.db
