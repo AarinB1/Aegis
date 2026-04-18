@@ -28,8 +28,13 @@ class CandidateRegion:
     mask: np.ndarray
     area_px: int
     mean_bgr: Tuple[float, float, float]
+    mean_hsv: Tuple[float, float, float]
     redness_ratio: float
+    blood_ratio: float
+    orange_ratio: float
+    purple_ratio: float
     person_roi: Tuple[int, int, int, int]
+    person_detected: bool
 
 
 class WoundAnalyzer:
@@ -54,7 +59,7 @@ class WoundAnalyzer:
 
         bgr = self._ensure_bgr(image)
         image_quality = self._estimate_image_quality(bgr)
-        rois = self._detect_person_rois(bgr)
+        rois, person_detected = self._detect_person_rois_with_source(bgr)
         candidate_regions: List[CandidateRegion] = []
 
         for roi in rois:
@@ -77,13 +82,18 @@ class WoundAnalyzer:
                         ),
                         area_px=candidate.area_px,
                         mean_bgr=candidate.mean_bgr,
+                        mean_hsv=candidate.mean_hsv,
                         redness_ratio=candidate.redness_ratio,
+                        blood_ratio=candidate.blood_ratio,
+                        orange_ratio=candidate.orange_ratio,
+                        purple_ratio=candidate.purple_ratio,
                         person_roi=roi,
+                        person_detected=person_detected,
                     )
                 )
 
         deduped_candidates = self._dedupe_candidates(candidate_regions)
-        scale = pixels_per_cm or self._estimate_pixels_per_cm(bgr, rois)
+        scale = pixels_per_cm or self._estimate_pixels_per_cm(bgr, rois, person_detected=person_detected)
         wounds = [self._candidate_to_wound(candidate, scale) for candidate in deduped_candidates]
         overall_severity = calculate_overall_severity(wounds)
         priority_suggestion = calculate_priority_suggestion(wounds)
@@ -153,9 +163,16 @@ class WoundAnalyzer:
         return round(float(0.65 * blur_score + 0.35 * brightness_score), 3)
 
     def _detect_person_rois(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
+        rois, _ = self._detect_person_rois_with_source(image)
+        return rois
+
+    def _detect_person_rois_with_source(
+        self,
+        image: np.ndarray,
+    ) -> Tuple[List[Tuple[int, int, int, int]], bool]:
         if self.yolo_model is None:
             h, w = image.shape[:2]
-            return [(0, 0, w, h)]
+            return [(0, 0, w, h)], False
 
         predictions = self.yolo_model.predict(image, verbose=False, classes=[0])
         rois: List[Tuple[int, int, int, int]] = []
@@ -172,25 +189,49 @@ class WoundAnalyzer:
                 )
 
         if rois:
-            return rois
+            return rois, True
         h, w = image.shape[:2]
-        return [(0, 0, w, h)]
+        return [(0, 0, w, h)], False
 
     def _find_wound_candidates(self, image: np.ndarray) -> List[CandidateRegion]:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
 
-        lower_red_1 = np.array([0, 65, 45], dtype=np.uint8)
+        lower_red_1 = np.array([0, 110, 40], dtype=np.uint8)
         upper_red_1 = np.array([12, 255, 255], dtype=np.uint8)
-        lower_red_2 = np.array([165, 65, 45], dtype=np.uint8)
+        lower_red_2 = np.array([165, 110, 40], dtype=np.uint8)
         upper_red_2 = np.array([180, 255, 255], dtype=np.uint8)
         red_mask = cv2.inRange(hsv, lower_red_1, upper_red_1) | cv2.inRange(
             hsv, lower_red_2, upper_red_2
         )
+        blood_mask = red_mask
 
         a_channel = lab[:, :, 1]
-        tissue_mask = cv2.threshold(a_channel, 150, 255, cv2.THRESH_BINARY)[1]
-        candidate_mask = cv2.bitwise_and(red_mask, tissue_mask)
+        tissue_mask = cv2.threshold(a_channel, 138, 255, cv2.THRESH_BINARY)[1]
+
+        burn_mask = cv2.inRange(
+            hsv,
+            np.array([5, 80, 70], dtype=np.uint8),
+            np.array([25, 255, 255], dtype=np.uint8),
+        )
+        purple_mask = cv2.inRange(
+            hsv,
+            np.array([120, 35, 25], dtype=np.uint8),
+            np.array([165, 255, 230], dtype=np.uint8),
+        )
+
+        blue_channel, green_channel, red_channel = cv2.split(image)
+        red_excess = red_channel.astype(np.float32) - (
+            (green_channel.astype(np.float32) + blue_channel.astype(np.float32)) / 2.0
+        )
+        local_red = red_excess - cv2.GaussianBlur(red_excess, (0, 0), sigmaX=11)
+        contrast_mask = np.where((local_red > 5.0) | (red_excess > 70.0), 255, 0).astype(np.uint8)
+
+        candidate_mask = cv2.bitwise_and(blood_mask, tissue_mask)
+        candidate_mask = cv2.bitwise_and(candidate_mask, contrast_mask)
+        blood_mask = cv2.bitwise_and(blood_mask, tissue_mask)
+        burn_mask = cv2.bitwise_and(burn_mask, tissue_mask)
+        purple_mask = cv2.bitwise_and(purple_mask, tissue_mask)
 
         kernel = np.ones((5, 5), np.uint8)
         cleaned = cv2.morphologyEx(candidate_mask, cv2.MORPH_OPEN, kernel)
@@ -198,22 +239,38 @@ class WoundAnalyzer:
 
         contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         image_area = image.shape[0] * image.shape[1]
+        image_height, image_width = image.shape[:2]
         candidates: List[CandidateRegion] = []
+        minimum_area = max(150, int(image_area * 0.0008))
 
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area < max(100, image_area * 0.0005):
+            if area < minimum_area:
                 continue
 
             x, y, w, h = cv2.boundingRect(contour)
+            border_touches = int(x <= 1) + int(y <= 1) + int(x + w >= image_width - 1) + int(
+                y + h >= image_height - 1
+            )
+            if border_touches >= 2 and area >= image_area * 0.01:
+                continue
+            if border_touches >= 1 and area < 400:
+                continue
+
             contour_mask = np.zeros(image.shape[:2], dtype=np.uint8)
             cv2.drawContours(contour_mask, [contour], -1, 255, thickness=cv2.FILLED)
             pixels = image[contour_mask > 0]
+            hsv_pixels = hsv[contour_mask > 0]
             if pixels.size == 0:
                 continue
 
+            mask_index = contour_mask > 0
             redness_ratio = float(np.mean(pixels[:, 2] > (pixels[:, 1] + 18)))
+            blood_ratio = float(np.mean(blood_mask[mask_index] > 0))
+            orange_ratio = float(np.mean(burn_mask[mask_index] > 0))
+            purple_ratio = float(np.mean(purple_mask[mask_index] > 0))
             mean_bgr = tuple(float(v) for v in pixels.mean(axis=0))
+            mean_hsv = tuple(float(v) for v in hsv_pixels.mean(axis=0))
 
             candidates.append(
                 CandidateRegion(
@@ -221,13 +278,26 @@ class WoundAnalyzer:
                     mask=contour_mask,
                     area_px=int(area),
                     mean_bgr=mean_bgr,
+                    mean_hsv=mean_hsv,
                     redness_ratio=redness_ratio,
+                    blood_ratio=blood_ratio,
+                    orange_ratio=orange_ratio,
+                    purple_ratio=purple_ratio,
                     person_roi=(0, 0, image.shape[1], image.shape[0]),
+                    person_detected=False,
                 )
             )
 
         candidates.sort(key=lambda candidate: candidate.area_px, reverse=True)
-        return candidates[:8]
+        if candidates:
+            largest_area = candidates[0].area_px
+            minimum_significant_area = max(250, int(largest_area * 0.06))
+            candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.area_px >= minimum_significant_area or candidate.area_px >= 900
+            ]
+        return candidates[:6]
 
     def _refine_with_sam(
         self,
@@ -264,8 +334,13 @@ class WoundAnalyzer:
             mask=mask,
             area_px=area,
             mean_bgr=candidate.mean_bgr,
+            mean_hsv=candidate.mean_hsv,
             redness_ratio=candidate.redness_ratio,
+            blood_ratio=candidate.blood_ratio,
+            orange_ratio=candidate.orange_ratio,
+            purple_ratio=candidate.purple_ratio,
             person_roi=candidate.person_roi,
+            person_detected=candidate.person_detected,
         )
 
     def _place_mask(
@@ -285,8 +360,10 @@ class WoundAnalyzer:
         self,
         image: np.ndarray,
         rois: Sequence[Tuple[int, int, int, int]],
+        *,
+        person_detected: bool,
     ) -> float:
-        if not rois:
+        if not rois or not person_detected:
             return self.fallback_pixels_per_cm
 
         _, _, _, tallest_person = max(rois, key=lambda roi: roi[3])
@@ -296,9 +373,13 @@ class WoundAnalyzer:
     def _candidate_to_wound(self, candidate: CandidateRegion, pixels_per_cm: float) -> WoundRecord:
         x, y, w, h = candidate.bbox
         size_cm2 = round(candidate.area_px / max(pixels_per_cm**2, 1.0), 2)
-        bleeding = candidate.redness_ratio >= 0.35
         wound_type = self._classify_wound_type(candidate)
-        location_type = infer_location_type(candidate.bbox, candidate.person_roi)
+        bleeding = self._detect_bleeding(candidate, wound_type)
+        location_type = infer_location_type(
+            candidate.bbox,
+            candidate.person_roi,
+            person_detected=candidate.person_detected,
+        )
         severity = calculate_wound_severity(
             size_cm2=size_cm2,
             bleeding_detected=bleeding,
@@ -322,26 +403,41 @@ class WoundAnalyzer:
 
     def _classify_wound_type(self, candidate: CandidateRegion) -> str:
         blue, green, red = candidate.mean_bgr
+        hue, saturation, value = candidate.mean_hsv
         _, _, w, h = candidate.bbox
         aspect_ratio = w / max(h, 1)
 
-        if red > green + 40 and candidate.redness_ratio > 0.55 and aspect_ratio < 1.35 and candidate.area_px < 1400:
-            return "puncture"
-        if red > green + 35 and candidate.redness_ratio > 0.5 and aspect_ratio > 1.8:
-            return "laceration"
-        if red > green + 25 and candidate.redness_ratio > 0.45:
-            return "abrasion"
-        if green > red and blue > red:
+        if candidate.orange_ratio >= 0.65 and aspect_ratio < 1.6 and candidate.area_px >= 1200:
+            return "burn"
+        if candidate.purple_ratio >= 0.18 and candidate.blood_ratio < 0.25:
             return "bruise"
-        if red > 140 and green > 100 and blue < 110:
+        if candidate.blood_ratio >= 0.45 and aspect_ratio < 1.35 and candidate.area_px < 1800:
+            return "puncture"
+        if candidate.blood_ratio >= 0.28 and (aspect_ratio > 1.6 or candidate.area_px >= 1500):
+            return "laceration"
+        if candidate.blood_ratio >= 0.14 or candidate.redness_ratio >= 0.32:
+            return "abrasion"
+        if candidate.purple_ratio >= 0.1 or (green > red and blue > red):
+            return "bruise"
+        if candidate.orange_ratio >= 0.15 or (5 <= hue <= 25 and saturation >= 75 and value >= 70):
             return "burn"
         return "unknown"
 
+    def _detect_bleeding(self, candidate: CandidateRegion, wound_type: str) -> bool:
+        if wound_type == "bruise":
+            return False
+        if wound_type == "burn":
+            return False
+        return candidate.blood_ratio >= 0.2 or candidate.redness_ratio >= 0.4
+
     def _score_confidence(self, candidate: CandidateRegion, bleeding: bool) -> float:
         contour_density = min(candidate.area_px / 2500.0, 1.0)
-        redness_signal = min(candidate.redness_ratio * 1.2, 1.0)
+        color_signal = min(
+            max(candidate.blood_ratio, candidate.orange_ratio, candidate.purple_ratio) * 1.2,
+            1.0,
+        )
         bleeding_bonus = 0.1 if bleeding else 0.0
-        confidence = 0.35 + 0.35 * contour_density + 0.2 * redness_signal + bleeding_bonus
+        confidence = 0.35 + 0.35 * contour_density + 0.2 * color_signal + bleeding_bonus
         return round(float(min(confidence, 0.99)), 3)
 
     def _build_notes(self, wound_type: str, bleeding: bool, size_cm2: float, location_type: str) -> str:

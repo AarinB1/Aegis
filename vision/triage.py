@@ -12,7 +12,12 @@ PrioritySuggestion = Literal["RED", "YELLOW", "GREEN"]
 def infer_location_type(
     wound_bbox: tuple[int, int, int, int],
     person_roi: tuple[int, int, int, int],
+    *,
+    person_detected: bool = True,
 ) -> LocationType:
+    if not person_detected:
+        return "limb"
+
     wound_x, wound_y, wound_w, wound_h = wound_bbox
     roi_x, roi_y, roi_w, roi_h = person_roi
 
