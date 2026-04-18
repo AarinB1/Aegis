@@ -285,3 +285,62 @@ def start_triage_engine():
 
 
 __all__ = ['TriageEngine', 'start_triage_engine']
+
+
+# ============================================================
+# Public helper API - for other subsystems (Neal, Aarin, etc.)
+# ============================================================
+
+_engine_singleton: Optional[TriageEngine] = None
+
+
+def _get_engine() -> TriageEngine:
+    """Lazily build one shared engine instance so callers don't manage it."""
+    global _engine_singleton
+    if _engine_singleton is None:
+        _engine_singleton = TriageEngine()
+    return _engine_singleton
+
+
+def get_priority(casualty: Casualty) -> str:
+    """
+    Return the triage engine's suggested priority for one casualty.
+
+    Returns one of: 'red', 'yellow', 'green'
+    Never returns 'black' or 'gray' - those are medic-only per PRD.
+
+    Usage:
+        from triage_engine import get_priority
+        priority = get_priority(casualty)
+    """
+    engine = _get_engine()
+    evidence = engine.gather_evidence(casualty)
+    scores = engine.calculate_triage_scores(evidence)
+    priority = engine.determine_priority(scores)
+    return priority.value
+
+
+def get_priority_with_reasoning(casualty: Casualty) -> dict:
+    """
+    Same as get_priority but also returns confidence, score, and Llama reasoning.
+
+    Returns dict: {priority, confidence, reasoning, score}
+
+    Usage:
+        result = get_priority_with_reasoning(casualty)
+        print(result['priority'])   # 'red' / 'yellow' / 'green'
+        print(result['reasoning'])  # clinical reasoning
+    """
+    engine = _get_engine()
+    evidence = engine.gather_evidence(casualty)
+    scores = engine.calculate_triage_scores(evidence)
+    rule_priority = engine.determine_priority(scores)
+    llm_result = engine.llm_analyzer.enhance_triage_reasoning(
+        evidence, scores, rule_priority.value
+    )
+    return {
+        'priority': rule_priority.value,
+        'confidence': llm_result['confidence'],
+        'reasoning': '; '.join(llm_result['reasoning'][:2]),
+        'score': scores['total_score'],
+    }
