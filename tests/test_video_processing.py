@@ -94,6 +94,50 @@ class FakeAnalyzer:
         return "heuristic"
 
 
+class MultiCasualtyFakeAnalyzer:
+    def detect_person_rois(self, image):
+        return [(10, 20, 70, 90), (120, 30, 70, 90)]
+
+    def analyze_image(self, image, pixels_per_cm=None):
+        return {
+            "wounds_detected": True,
+            "wound_count": 2,
+            "wounds": [
+                {
+                    "location": {"x": 28, "y": 48, "width": 24, "height": 28},
+                    "severity": 0.86,
+                    "type": "laceration",
+                    "location_type": "torso",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 16.2,
+                    "confidence": 0.93,
+                    "mask_area_px": 670,
+                    "notes": "critical wound",
+                },
+                {
+                    "location": {"x": 142, "y": 56, "width": 18, "height": 20},
+                    "severity": 0.31,
+                    "type": "burn",
+                    "location_type": "limb",
+                    "bleeding": False,
+                    "bleeding_detected": False,
+                    "size_cm2": 6.2,
+                    "confidence": 0.81,
+                    "mask_area_px": 310,
+                    "notes": "secondary wound",
+                },
+            ],
+            "overall_severity": 1.0,
+            "priority_suggestion": "RED",
+            "confidence": 0.9,
+            "image_quality": 0.88,
+        }
+
+    def detection_mode(self):
+        return "heuristic"
+
+
 class VideoProcessingTests(unittest.TestCase):
     def test_recv_updates_state_and_keeps_track_stable(self) -> None:
         fake_state = FakeState()
@@ -118,6 +162,7 @@ class VideoProcessingTests(unittest.TestCase):
         self.assertEqual(len(fake_state.suggestions), 1)
         self.assertIsNotNone(fake_state.latest_frame)
         self.assertEqual(processor.last_result["casualties"][0]["alias"], "A1")
+        self.assertEqual(processor.last_result["scene_summary"]["top_casualty_alias"], "A1")
 
     def test_video_processor_writes_annotated_video_and_frame_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,6 +218,22 @@ class VideoProcessingTests(unittest.TestCase):
             payload = json.loads(json_path.read_text())
             self.assertGreaterEqual(payload["processed_frames"], 1)
             self.assertIn("summary", payload)
+            self.assertIn("scene_summary", payload)
+
+    def test_scene_summary_prioritizes_highest_risk_casualty(self) -> None:
+        processor = VideoProcessor(MultiCasualtyFakeAnalyzer())
+        frame = np.full((160, 240, 3), 150, dtype=np.uint8)
+
+        annotated = processor.recv(frame)
+
+        self.assertEqual(annotated.shape, frame.shape)
+        self.assertIsNotNone(processor.last_result)
+        scene_summary = processor.last_result["scene_summary"]
+        self.assertEqual(scene_summary["tracked_casualties"], 2)
+        self.assertEqual(scene_summary["top_casualty_alias"], "A1")
+        self.assertEqual(scene_summary["top_casualty_priority"], "RED")
+        self.assertGreater(scene_summary["top_casualty_score"], 0.7)
+        self.assertIn("active bleeding", scene_summary["top_casualty_rationale"])
 
     def _write_test_video(self, path: Path) -> None:
         writer = cv2.VideoWriter(

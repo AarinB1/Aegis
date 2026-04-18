@@ -6,10 +6,10 @@ from typing import Any, Optional, Tuple
 
 import cv2
 
-from vision.contracts import VideoAnalysisResult, VideoFrameResult, WoundAnalysisResult, WoundRecord
+from vision.contracts import SceneSummary, VideoAnalysisResult, VideoFrameResult, WoundAnalysisResult, WoundRecord
 from vision.render import draw_wounds
 from vision.state_bridge import VisionStateBridge
-from vision.summary import summarize_analysis, summarize_video_frames
+from vision.summary import build_scene_summary, empty_scene_summary, summarize_analysis, summarize_video_frames
 from vision.tracker import SimpleTracker, Track
 from vision.triage import calculate_overall_severity, calculate_priority_suggestion
 from vision.wound_detection import WoundAnalyzer
@@ -35,6 +35,7 @@ class VideoProcessor:
             suggestion_factory=suggestion_factory,
         )
         self.last_result: dict | None = None
+        self._attention_memory: dict[str, float] = {}
 
     def recv(self, frame) -> cv2.typing.MatLike:
         timestamp = time.time()
@@ -44,16 +45,28 @@ class VideoProcessor:
 
         analysis = self.analyzer.analyze_image(frame, pixels_per_cm=self.pixels_per_cm)
         casualties = self._build_casualties(tracks, analysis)
+        scene_summary = self._build_scene_summary(casualties)
 
         annotated_frame = draw_wounds(frame, analysis)
         for casualty in casualties:
-            annotated_frame = self._draw_track_overlay(annotated_frame, casualty)
+            annotated_frame = self._draw_track_overlay(
+                annotated_frame,
+                casualty,
+                focus_alias=scene_summary.top_casualty_alias,
+            )
+        annotated_frame = self._draw_scene_overlay(
+            annotated_frame,
+            frame_index=self.frame_index,
+            summary=summarize_analysis(analysis, self.analyzer.detection_mode()),
+            scene_summary=scene_summary,
+        )
 
         self.state_bridge.publish(casualties=casualties, latest_frame=annotated_frame)
         self.last_result = {
             "frame_index": self.frame_index,
             "analysis": analysis,
             "summary": summarize_analysis(analysis, self.analyzer.detection_mode()).model_dump(),
+            "scene_summary": scene_summary.model_dump(),
             "casualties": casualties,
         }
         self.frame_index += 1
@@ -125,17 +138,12 @@ class VideoProcessor:
                             timestamp_ms=int((frame_index / fps) * 1000),
                             analysis=WoundAnalysisResult.model_validate(analysis),
                             summary=summary,
+                            scene_summary=SceneSummary.model_validate(self.last_result["scene_summary"]),
                         )
                     )
                     processed_count += 1
-                    annotated_frame = self._decorate_frame(
-                        annotated_frame,
-                        frame_index,
-                        wound_count=analysis["wound_count"],
-                        summary=summary,
-                    )
                 else:
-                    annotated_frame = self._decorate_frame(frame, frame_index, wound_count=None, summary=None)
+                    annotated_frame = self._decorate_idle_frame(frame, frame_index)
 
                 if writer is not None:
                     writer.write(annotated_frame)
@@ -156,6 +164,7 @@ class VideoProcessor:
             frame_stride=frame_stride,
             duration_ms=duration_ms,
             summary=summarize_video_frames(processed_frames, self.analyzer.detection_mode()),
+            scene_summary=processed_frames[-1].scene_summary if processed_frames else empty_scene_summary(),
             frames=processed_frames,
         )
         return result.model_dump()
@@ -165,6 +174,7 @@ class VideoProcessor:
         self.tracker.reset()
         self.state_bridge.reset()
         self.last_result = None
+        self._attention_memory.clear()
 
     def _build_casualties(self, tracks: list[Track], analysis: dict) -> list[dict]:
         grouped_wounds = self._group_wounds_by_track(tracks, analysis.get("wounds", []))
@@ -174,12 +184,14 @@ class VideoProcessor:
             wound_records = [WoundRecord.model_validate(wound) for wound in wounds]
             overall_severity = calculate_overall_severity(wound_records)
             priority = calculate_priority_suggestion(wound_records)
+            bleeding_wound_count = sum(1 for wound in wounds if wound["bleeding"])
             casualties.append(
                 {
                     "alias": track.alias,
                     "track_id": track.track_id,
                     "bbox": track.bbox,
                     "last_seen_ts": track.last_seen_ts,
+                    "bleeding_wound_count": bleeding_wound_count,
                     "analysis": {
                         "wounds_detected": bool(wounds),
                         "wound_count": len(wounds),
@@ -191,7 +203,7 @@ class VideoProcessor:
                     },
                 }
             )
-        return casualties
+        return self._rank_casualties(casualties)
 
     def _group_wounds_by_track(
         self,
@@ -227,18 +239,26 @@ class VideoProcessor:
         x, y, w, h = bbox
         return (x, y, x + w, y + h)
 
-    def _draw_track_overlay(self, frame_bgr: cv2.typing.MatLike, casualty: dict):
+    def _draw_track_overlay(
+        self,
+        frame_bgr: cv2.typing.MatLike,
+        casualty: dict,
+        *,
+        focus_alias: str | None,
+    ):
         canvas = frame_bgr.copy()
         x1, y1, x2, y2 = casualty["bbox"]
         priority = casualty["analysis"]["priority_suggestion"]
         color = (0, 0, 255) if priority == "RED" else (0, 200, 255) if priority == "YELLOW" else (0, 180, 0)
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+        is_focus = casualty["alias"] == focus_alias
+        box_thickness = 4 if is_focus else 2
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, box_thickness)
         cv2.putText(
             canvas,
-            f"{casualty['alias']} #{casualty['track_id']} {priority}",
+            self._track_label(casualty, is_focus=is_focus),
             (x1, max(24, y1 - 8)),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
+            0.62 if is_focus else 0.58,
             color,
             2,
             cv2.LINE_AA,
@@ -266,30 +286,189 @@ class VideoProcessor:
 
         return None, None
 
-    def _decorate_frame(
+    def _draw_scene_overlay(
         self,
         frame_bgr: cv2.typing.MatLike,
         frame_index: int,
-        wound_count: Optional[int],
         summary,
+        scene_summary: SceneSummary,
     ):
         canvas = frame_bgr.copy()
-        lines = [f"Frame {frame_index}"]
-        if summary is not None:
-            lines.append(f"Wounds {wound_count} | Max severity {summary.max_wound_severity:.2f}")
-            lines.append(f"Bleeding {summary.bleeding_present}")
+        overlay = canvas.copy()
+        cv2.rectangle(overlay, (10, 10), (min(canvas.shape[1] - 10, 520), 138), (12, 18, 32), thickness=-1)
+        cv2.addWeighted(overlay, 0.68, canvas, 0.32, 0, canvas)
+
+        lines = [
+            f"MASCAL Scene | Frame {frame_index}",
+            (
+                f"Tracked {scene_summary.tracked_casualties} | "
+                f"Visible wounds {scene_summary.casualties_with_wounds} | "
+                f"Immediate {scene_summary.immediate_casualties}"
+            ),
+            (
+                f"Scene priority {summary.priority_suggestion} | "
+                f"Peak visible severity {summary.max_wound_severity:.2f} | "
+                f"Bleeding {summary.bleeding_present}"
+            ),
+        ]
+        if scene_summary.top_casualty_alias is not None:
+            lines.append(
+                f"FOCUS {scene_summary.top_casualty_alias} {scene_summary.top_casualty_priority} | "
+                f"{scene_summary.top_casualty_rationale}"
+            )
         else:
-            lines.append("Skipped frame")
+            lines.append("FOCUS none | no visible casualty wound burden")
 
         for idx, line in enumerate(lines):
             cv2.putText(
                 canvas,
                 line,
-                (16, 28 + (idx * 24)),
+                (20, 34 + (idx * 26)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                0.66 if idx == 0 else 0.6,
                 (255, 255, 255),
                 2,
                 cv2.LINE_AA,
             )
+        self._draw_priority_sidebar(canvas, scene_summary)
         return canvas
+
+    def _decorate_idle_frame(self, frame_bgr: cv2.typing.MatLike, frame_index: int):
+        canvas = frame_bgr.copy()
+        cv2.putText(
+            canvas,
+            f"Frame {frame_index} | skipped for runtime budget",
+            (16, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return canvas
+
+    def _rank_casualties(self, casualties: list[dict]) -> list[dict]:
+        active_aliases = {casualty["alias"] for casualty in casualties}
+        self._attention_memory = {
+            alias: score for alias, score in self._attention_memory.items() if alias in active_aliases
+        }
+
+        for casualty in casualties:
+            raw_score = self._raw_attention_score(casualty)
+            previous = self._attention_memory.get(casualty["alias"], raw_score)
+            smoothed = round(float(min((0.65 * previous) + (0.35 * raw_score), 1.0)), 3)
+            casualty["attention_score"] = smoothed
+            casualty["attention_rationale"] = self._attention_rationale(casualty)
+            self._attention_memory[casualty["alias"]] = smoothed
+
+        casualties.sort(
+            key=lambda casualty: (
+                self._priority_rank(casualty["analysis"]["priority_suggestion"]),
+                casualty["attention_score"],
+                casualty["analysis"]["overall_severity"],
+                casualty["analysis"]["wound_count"],
+            ),
+            reverse=True,
+        )
+        return casualties
+
+    def _build_scene_summary(self, casualties: list[dict]) -> SceneSummary:
+        return build_scene_summary(casualties)
+
+    def _raw_attention_score(self, casualty: dict) -> float:
+        analysis = casualty["analysis"]
+        wounds = analysis["wounds"]
+        severity = float(analysis["overall_severity"])
+        confidence = float(analysis["confidence"])
+        wound_count = int(analysis["wound_count"])
+        bleeding_count = int(casualty.get("bleeding_wound_count", 0))
+        central_wound = any(wound.get("location_type") in {"torso", "head"} for wound in wounds)
+
+        priority_base = {"RED": 0.55, "YELLOW": 0.32, "GREEN": 0.12}.get(
+            analysis["priority_suggestion"],
+            0.12,
+        )
+        score = priority_base
+        score += min(severity * 0.28, 0.28)
+        score += min(bleeding_count, 2) * 0.08
+        score += min(wound_count, 3) * 0.04
+        score += min(confidence * 0.05, 0.05)
+        if central_wound:
+            score += 0.06
+        return round(float(min(score, 1.0)), 3)
+
+    def _attention_rationale(self, casualty: dict) -> str:
+        analysis = casualty["analysis"]
+        wounds = analysis["wounds"]
+        reasons: list[str] = []
+        bleeding_count = casualty.get("bleeding_wound_count", 0)
+        if bleeding_count:
+            reasons.append("active bleeding")
+        if any(wound.get("location_type") == "torso" for wound in wounds):
+            reasons.append("torso wound")
+        elif any(wound.get("location_type") == "head" for wound in wounds):
+            reasons.append("head wound")
+        if analysis["wound_count"] > 1:
+            reasons.append(f"{analysis['wound_count']} visible wounds")
+        elif analysis["overall_severity"] >= 0.7:
+            reasons.append("high visible severity")
+        if not reasons:
+            reasons.append("monitor visible injuries")
+        return ", ".join(reasons[:3])
+
+    def _draw_priority_sidebar(self, canvas: cv2.typing.MatLike, scene_summary: SceneSummary) -> None:
+        if not scene_summary.top_casualties:
+            return
+
+        panel_width = 270
+        left = max(canvas.shape[1] - panel_width - 12, 12)
+        overlay = canvas.copy()
+        panel_height = 34 + (len(scene_summary.top_casualties) * 34)
+        cv2.rectangle(
+            overlay,
+            (left, 10),
+            (canvas.shape[1] - 10, min(canvas.shape[0] - 10, 10 + panel_height)),
+            (16, 24, 40),
+            thickness=-1,
+        )
+        cv2.addWeighted(overlay, 0.62, canvas, 0.38, 0, canvas)
+        cv2.putText(
+            canvas,
+            "ATTENTION RANK",
+            (left + 12, 32),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.56,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        for index, casualty in enumerate(scene_summary.top_casualties, start=1):
+            y = 32 + (index * 30)
+            color = (
+                (0, 0, 255)
+                if casualty.priority_suggestion == "RED"
+                else (0, 200, 255)
+                if casualty.priority_suggestion == "YELLOW"
+                else (0, 180, 0)
+            )
+            cv2.putText(
+                canvas,
+                f"{index}. {casualty.alias} {casualty.priority_suggestion}  score {casualty.attention_score:.2f}",
+                (left + 12, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.54,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+
+    def _priority_rank(self, priority: str) -> int:
+        return {"RED": 3, "YELLOW": 2, "GREEN": 1}.get(priority, 0)
+
+    def _track_label(self, casualty: dict, *, is_focus: bool) -> str:
+        prefix = "FOCUS " if is_focus else ""
+        return (
+            f"{prefix}{casualty['alias']} #{casualty['track_id']} "
+            f"{casualty['analysis']['priority_suggestion']} | "
+            f"score {casualty.get('attention_score', 0.0):.2f}"
+        )
