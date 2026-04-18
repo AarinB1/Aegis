@@ -113,35 +113,99 @@ python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Download model weights (one-time, ~3GB)
-python scripts/download_models.py
+# Optional: place pretrained weights in models/
+# - YOLO: models/yolov8n.pt
+# - SAM:  models/mobile_sam.pt
 
-# Launch the tactical dashboard
+# Analyze a still image from Person 1's wound pipeline
+python -m vision.cli assets/test_wound.jpg --pixels-per-cm 12
+
+# Export the full Person 1 handoff artifacts
+python scripts/run_wound_detection.py assets/test_wound.jpg --pixels-per-cm 12
+
+# Run the same pipeline across a short video clip
+python scripts/run_wound_detection_video.py assets/test_wound_video.avi --pixels-per-cm 12 --frame-stride 3
+
+# Or run the hackathon demo UI
 streamlit run ui/app.py
 ```
 
-The dashboard opens at `http://localhost:8501`.
+Primary integration for the hackathon is in-process Python, not HTTP.
+
+The vision side now exposes Python helpers that can build `Suggestion`-compatible
+objects without depending on the group-owned `schema.py`:
+
+```python
+from vision.integration import build_wound_suggestions, top_wound_suggestion
+```
+
+The FastAPI wrapper still exists in [vision/api.py](/Users/aaryansuri/Documents/New project/Aegis/vision/api.py), but it is now optional and should be treated as a demo/debug surface, not the primary mobile contract.
+
+The wound analysis payload now also includes Person 4's triage-facing fields:
+
+- `location_type`: `head`, `torso`, or `limb`
+- `bleeding_detected`: alias of `bleeding`
+- `overall_severity`: capped sum of wound severities
+- `priority_suggestion`: `RED`, `YELLOW`, or `GREEN`
+
+Example output:
+
+```json
+{
+  "wounds_detected": true,
+  "wound_count": 2,
+  "overall_severity": 0.8,
+  "priority_suggestion": "RED",
+  "wounds": [
+    {
+      "location": { "x": 100, "y": 200, "width": 50, "height": 30 },
+      "severity": 0.7,
+      "type": "laceration",
+      "location_type": "torso",
+      "bleeding": true,
+      "bleeding_detected": true,
+      "size_cm2": 15.5,
+      "confidence": 0.85,
+      "mask_area_px": 1860,
+      "notes": "type heuristic: laceration; estimated size: 15.5 cm^2; body region: torso; active bleeding signature"
+    }
+  ],
+  "confidence": 0.85,
+  "image_quality": 0.9
+}
+```
 
 ---
 
 ## Demo
 
-Run the bundled scenario video through the full pipeline:
+Generate a synthetic casualty image for demos:
 
 ```bash
-streamlit run ui/app.py -- --source assets/scenario_video.mp4
+python scripts/generate_demo_assets.py
 ```
 
-Or use a live webcam:
+Then run either the image or video demo:
 
 ```bash
-streamlit run ui/app.py -- --source 0
+python scripts/run_wound_detection_video.py assets/test_wound_video.avi --pixels-per-cm 12 --frame-stride 3
+streamlit run ui/app.py
 ```
 
-To prove offline operation during a live demo:
-```bash
-# Disconnect from wifi — AEGIS continues running
-```
+The app supports:
+
+- Image upload for quick teammate testing
+- Camera capture for mobile/laptop demos
+- Overlay rendering for wound boxes and severity
+- Raw JSON output for downstream fusion and triage components
+
+The video script produces:
+
+- An annotated demo video
+- A per-frame JSON timeline with wound detections
+- A video-level summary for triage and presentation use
+
+For the merge contract used by the other teammates, see `docs/person1_handoff.md`.
 
 ---
 
@@ -196,7 +260,6 @@ Benchmark results in `benchmark/results.md`.
 
 ## Project Structure
 aegis/
-├── schema.py              # Shared Casualty data model
 ├── requirements.txt       # Pinned dependencies
 ├── vision/                # Vision pipeline
 ├── audio/                 # Audio pipeline
