@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from shared.state import app_state
-from ui.theme import source_color
+from ui.theme import hud_label, source_dot
 
 
 def pending_panel() -> None:
@@ -14,43 +16,51 @@ def pending_panel() -> None:
     )
 
     st.markdown(
-        '<div class="aegis-panel"><div class="aegis-kicker">Review Queue</div>'
-        '<div class="aegis-title">Pending AI</div>'
-        '<div class="aegis-subtle">AI outputs are wrapped in PendingSuggestion before medic action.</div></div>',
+        f"""
+        <section class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-kicker">{hud_label("Pending AI")}</div>
+                    <div class="card-title">Suggestions</div>
+                </div>
+                <div class="card-meta">{len(pending_suggestions)} active</div>
+            </div>
+            {
+                '<div class="card-subtle">No pending suggestions.</div>'
+                if not pending_suggestions
+                else ''
+            }
+        </section>
+        """,
         unsafe_allow_html=True,
     )
 
-    if not pending_suggestions:
-        st.markdown('<div class="aegis-empty">No pending suggestions.</div>', unsafe_allow_html=True)
-        return
-
     for pending in pending_suggestions:
-        badge = source_color(pending.source)
-        casualty_id = pending.casualty_id or "Unknown casualty"
         raw_text = getattr(pending.raw, "suggestion", "No suggestion text")
-
+        casualty_id = pending.casualty_id or "unlinked"
+        confidence = round(max(0.0, min(1.0, pending.confidence)) * 100)
         st.markdown(
-            (
-                "<div class='aegis-row' style='display:block;'>"
-                "<div style='display:flex;justify-content:space-between;align-items:center;gap:0.75rem;'>"
-                f"<div class='aegis-badge' style='background:{badge}22;border:1px solid {badge};color:{badge};'>"
-                f"{pending.source.title()}</div>"
-                f"<div class='aegis-list-meta'>{casualty_id}</div>"
-                "</div>"
-                f"<div class='aegis-list-title' style='margin-top:0.7rem;'>{raw_text}</div>"
-                f"<div class='aegis-list-meta'>Pending ID: {pending.id}</div>"
-                "</div>"
-            ),
+            f"""
+            <article class="card" style="margin-top:0.9rem;">
+                <div class="pending-top">
+                    <div>
+                        <div class="source-badge">{source_dot(pending.source)}{html.escape(pending.source.upper())}</div>
+                        <div class="pending-casualty">Casualty #{html.escape(casualty_id)}</div>
+                    </div>
+                    <div class="card-meta">AI · {confidence}%</div>
+                </div>
+                <div class="pending-text">{html.escape(raw_text)}</div>
+                <div class="pending-meta">Pending ID {html.escape(pending.id)}</div>
+            </article>
+            """,
             unsafe_allow_html=True,
         )
-        st.progress(max(0.0, min(1.0, pending.confidence)))
-        st.caption(f"Confidence {pending.confidence:.2f}")
-        confirm_col, dismiss_col = st.columns(2)
+        confirm_col, dismiss_col = st.columns([1, 1], gap="small")
         with confirm_col:
-            if st.button("✓ Confirm", key=f"confirm-{pending.id}", width="stretch"):
+            if st.button("Confirm", key=f"confirm-{pending.id}", type="primary", width="stretch"):
                 app_state.confirm_suggestion(pending.id)
                 st.rerun()
         with dismiss_col:
-            if st.button("✗ Dismiss", key=f"dismiss-{pending.id}", width="stretch"):
+            if st.button("Dismiss", key=f"dismiss-{pending.id}", type="tertiary", width="stretch"):
                 app_state.dismiss_suggestion(pending.id)
                 st.rerun()

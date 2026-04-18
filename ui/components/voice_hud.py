@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from shared.state import app_state
-from ui.theme import ACCENT_BLUE, GREEN, RED
+from ui.theme import hud_label
 
 
 def _last_voice_decision() -> str:
@@ -17,39 +19,28 @@ def _last_voice_decision() -> str:
 
 def voice_hud() -> None:
     state, transcription = app_state.get_voice_state()
-    status_label = _last_voice_decision()
-    indicator = GREEN if state == "listening" else RED
+    intent_chip = transcription.strip() if transcription.strip() else "awaiting input"
+    live = state.lower() == "listening"
 
     st.markdown(
-        '<div class="aegis-panel"><div class="aegis-kicker">Voice</div>'
-        '<div class="aegis-title">Voice HUD</div>'
-        '<div class="aegis-subtle">Current microphone state and last medic action.</div></div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        (
-            "<div class='aegis-row'>"
-            "<div>"
-            f"<div class='aegis-list-title'>Mic: {transcription or 'idle'}</div>"
-            f"<div class='aegis-list-meta'>Recognizer state: {state}</div>"
-            "</div>"
-            f"<div class='aegis-badge' style='background:{indicator}22;border:1px solid {indicator};"
-            f"color:{indicator};'>{state.upper()}</div>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        (
-            "<div class='aegis-row'>"
-            "<div>"
-            "<div class='aegis-list-title'>Last suggestion action</div>"
-            "<div class='aegis-list-meta'>Updates from medic confirmation flow.</div>"
-            "</div>"
-            f"<div class='aegis-badge' style='background:{ACCENT_BLUE}22;border:1px solid {ACCENT_BLUE};"
-            f"color:{ACCENT_BLUE};'>{status_label}</div>"
-            "</div>"
-        ),
+        f"""
+        <section class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-kicker">{hud_label("Voice")}</div>
+                    <div class="card-title">Acoustics</div>
+                </div>
+                <div class="card-meta">{html.escape(_last_voice_decision())}</div>
+            </div>
+            <div class="voice-status">
+                <span class="voice-dot {'live' if live else ''}">●</span>
+                {html.escape(state.upper())}
+            </div>
+            <div class="voice-transcript">
+                <div class="voice-transcript-text">{html.escape(transcription or 'No active transcription')}</div>
+                <div class="intent-chip">{html.escape(intent_chip)}</div>
+            </div>
+        </section>
+        """,
         unsafe_allow_html=True,
     )
