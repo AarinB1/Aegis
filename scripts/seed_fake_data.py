@@ -158,7 +158,7 @@ def _unassessed_casualty(now: datetime) -> Casualty:
     )
 
 
-def seed() -> None:
+def seed(*, include_medevac: bool = True) -> None:
     now = _now()
 
     app_state.upsert_casualty(_immediate_casualty(now))
@@ -206,20 +206,21 @@ def seed() -> None:
     )
 
     app_state.set_latest_frame(_build_demo_frame())
-    app_state.set_active_medevac(
-        "A1",
-        {
-            "line_1": "38S MB 4421 9912",
-            "line_2": "31.40 secure",
-            "line_3": "1 urgent, 1 priority",
-            "line_4": "None",
-            "line_5": "2 litter",
-            "line_6": "Enemy nearby",
-            "line_7": "Smoke",
-            "line_8": "2 US military",
-            "line_9": "Open field west of compound",
-        },
-    )
+    if include_medevac:
+        app_state.set_active_medevac(
+            "A1",
+            {
+                "line_1": "38S MB 4421 9912",
+                "line_2": "31.40 secure",
+                "line_3": "1 urgent, 1 priority",
+                "line_4": "None",
+                "line_5": "2 litter",
+                "line_6": "Enemy nearby",
+                "line_7": "Smoke",
+                "line_8": "2 US military",
+                "line_9": "Open field west of compound",
+            },
+        )
     app_state.audit("demo", "seed_fake_data", {"casualties": 3, "pending_suggestions": 2})
     app_state.audit("ui", "set_demo_mode", {"mode": "Fake"})
     app_state.set_voice_state("idle", "")

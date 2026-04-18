@@ -593,6 +593,26 @@ code, pre, kbd,
     line-height: 1.55;
 }}
 
+.sidebar-section {{
+    margin-top: 1.1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--divider);
+}}
+
+.demo-status {{
+    margin-top: 0.7rem;
+    margin-bottom: 0.9rem;
+    padding: 0.75rem 0.85rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.36);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}}
+
 .stButton > button {{
     border-radius: 999px;
     font-family: var(--font-sans);
@@ -685,7 +705,11 @@ def _hero() -> None:
 st.set_page_config(page_title="AEGIS Tactical Dashboard", layout="wide")
 st.markdown(STYLE_BLOCK, unsafe_allow_html=True)
 _ensure_seeded()
-controls()
+
+
+@st.fragment(run_every=0.5)
+def render_controls() -> None:
+    controls()
 
 
 @st.fragment(run_every=0.5)
@@ -712,5 +736,6 @@ def render_dashboard() -> None:
     with st.container():
         audit_log()
 
-
+with st.sidebar:
+    render_controls()
 render_dashboard()

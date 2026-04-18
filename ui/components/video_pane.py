@@ -42,7 +42,7 @@ def video_pane() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.image(frame[:, :, ::-1], use_container_width=True)
+    st.image(frame[:, :, ::-1], width="stretch")
     st.markdown(
         f"""
         <div class="video-meta-row bottom">
