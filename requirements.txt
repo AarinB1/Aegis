@@ -8,3 +8,6 @@ ultralytics>=8.3,<9
 segment-anything>=1.0
 streamlit>=1.39,<2
 python-multipart>=0.0.9,<1
+pandas>=2.2,<3
+librosa>=0.10,<1
+scikit-learn>=1.5,<2
