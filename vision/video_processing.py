@@ -47,7 +47,7 @@ class VideoProcessor:
         tracks = self.tracker.update(detections_xyxy, timestamp=timestamp)
 
         analysis = self.analyzer.analyze_image(work_frame, pixels_per_cm=self.pixels_per_cm)
-        analysis = self._stabilize_analysis(analysis)
+        analysis = self._stabilize_analysis(analysis, track_count=len(tracks))
         casualties = self._build_casualties(tracks, analysis)
         scene_summary = self._build_scene_summary(casualties)
         summary = summarize_analysis(analysis, self.analyzer.detection_mode())
@@ -87,6 +87,7 @@ class VideoProcessor:
             raise FileNotFoundError(f"unable to read video: {source}")
         if frame_stride < 1:
             raise ValueError("frame_stride must be >= 1")
+        self.reset()
 
         capture = cv2.VideoCapture(str(source))
         if not capture.isOpened():
@@ -229,7 +230,7 @@ class VideoProcessor:
             )
         return self._rank_casualties(casualties)
 
-    def _stabilize_analysis(self, analysis: dict) -> dict:
+    def _stabilize_analysis(self, analysis: dict, *, track_count: int) -> dict:
         if self.last_result is None:
             return analysis
 
@@ -241,6 +242,10 @@ class VideoProcessor:
 
         stabilized_wounds: list[dict] = []
         used_previous: set[int] = set()
+        allow_new_casualty_evidence = track_count > 1
+        new_wound_confidence_floor = 0.62 if allow_new_casualty_evidence else 0.97
+        new_wound_severity_floor = 0.46 if allow_new_casualty_evidence else 0.88
+        new_wound_area_floor = 8.0 if allow_new_casualty_evidence else 24.0
 
         for wound in current_wounds:
             match_index, match_iou = self._best_previous_match(wound, previous_wounds, used_previous)
@@ -253,9 +258,10 @@ class VideoProcessor:
             # demo look noisy. This keeps the overlay stable until we have a
             # better person-separated detector for medics vs casualty.
             if (
-                wound.get("confidence", 0.0) >= 0.97
-                or wound.get("severity", 0.0) >= 0.88
-                or wound.get("size_cm2", 0.0) >= 24.0
+                wound.get("confidence", 0.0) >= new_wound_confidence_floor
+                or wound.get("severity", 0.0) >= new_wound_severity_floor
+                or wound.get("size_cm2", 0.0) >= new_wound_area_floor
+                or (allow_new_casualty_evidence and wound.get("bleeding"))
             ):
                 stabilized_wounds.append(wound)
 
@@ -376,14 +382,63 @@ class VideoProcessor:
         return grouped
 
     def _match_wound_to_track(self, wound: dict, tracks: list[Track]) -> Track | None:
-        location = wound["location"]
-        center_x = location["x"] + (location["width"] / 2.0)
-        center_y = location["y"] + (location["height"] / 2.0)
+        if not tracks:
+            return None
+
+        wound_bbox = self._wound_bbox_tuple(wound)
+        best_track = None
+        best_score = 0.0
         for track in tracks:
-            x1, y1, x2, y2 = track.bbox
-            if x1 <= center_x <= x2 and y1 <= center_y <= y2:
-                return track
-        return tracks[0] if tracks else None
+            score = self._track_match_score(wound_bbox, track.bbox)
+            if score > best_score:
+                best_score = score
+                best_track = track
+
+        if best_track is None:
+            return None
+        if len(tracks) == 1:
+            return best_track
+        return best_track if best_score >= 0.18 else None
+
+    def _track_match_score(
+        self,
+        wound_bbox: tuple[int, int, int, int],
+        track_bbox: tuple[int, int, int, int],
+    ) -> float:
+        wx, wy, ww, wh = wound_bbox
+        tx1, ty1, tx2, ty2 = track_bbox
+        wound_area = max(ww * wh, 1)
+        track_area = max((tx2 - tx1) * (ty2 - ty1), 1)
+        overlap = self._intersection_area(wound_bbox, track_bbox)
+        if overlap <= 0:
+            return 0.0
+
+        wound_coverage = overlap / wound_area
+        track_coverage = overlap / track_area
+        wound_center_x = wx + (ww / 2.0)
+        wound_center_y = wy + (wh / 2.0)
+        center_inside = 1.0 if (tx1 <= wound_center_x <= tx2 and ty1 <= wound_center_y <= ty2) else 0.0
+        track_center_x = tx1 + ((tx2 - tx1) / 2.0)
+        track_center_y = ty1 + ((ty2 - ty1) / 2.0)
+        distance = ((wound_center_x - track_center_x) ** 2 + (wound_center_y - track_center_y) ** 2) ** 0.5
+        normalizer = max(((tx2 - tx1) ** 2 + (ty2 - ty1) ** 2) ** 0.5 / 2.0, 1.0)
+        proximity = max(0.0, 1.0 - (distance / normalizer))
+        return round((0.52 * wound_coverage) + (0.18 * track_coverage) + (0.2 * center_inside) + (0.1 * proximity), 3)
+
+    def _intersection_area(
+        self,
+        wound_bbox: tuple[int, int, int, int],
+        track_bbox: tuple[int, int, int, int],
+    ) -> int:
+        wx, wy, ww, wh = wound_bbox
+        tx1, ty1, tx2, ty2 = track_bbox
+        inter_x1 = max(wx, tx1)
+        inter_y1 = max(wy, ty1)
+        inter_x2 = min(wx + ww, tx2)
+        inter_y2 = min(wy + wh, ty2)
+        if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+            return 0
+        return int((inter_x2 - inter_x1) * (inter_y2 - inter_y1))
 
     def _casualty_confidence(self, wounds: list[dict], fallback: float) -> float:
         if not wounds:

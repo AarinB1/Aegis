@@ -29,6 +29,7 @@ class RunWoundDetectionScriptTests(unittest.TestCase):
             json_path = output_dir / "test_wound_wounds.json"
             image_path = output_dir / "test_wound_annotated.jpg"
 
+            self.assertIn("detection-mode:", completed.stdout)
             self.assertIn("json:", completed.stdout)
             self.assertTrue(json_path.exists())
             self.assertTrue(image_path.exists())

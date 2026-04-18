@@ -12,6 +12,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from vision.render import draw_wounds
+from vision.runtime import format_runtime_report, resolve_sam_checkpoint, resolve_yolo_weights
 from vision.wound_detection import WoundAnalyzer
 
 
@@ -39,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("models/mobile_sam.pt"),
         help="Path to SAM checkpoint",
     )
+    parser.add_argument(
+        "--allow-builtin-yolo",
+        action="store_true",
+        help="Allow the canonical yolov8n.pt alias to resolve through Ultralytics if local weights are missing",
+    )
     return parser
 
 
@@ -47,8 +53,8 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     analyzer = WoundAnalyzer(
-        yolo_weights=str(args.yolo_weights) if args.yolo_weights.exists() else None,
-        sam_checkpoint=str(args.sam_checkpoint) if args.sam_checkpoint.exists() else None,
+        yolo_weights=resolve_yolo_weights(args.yolo_weights, allow_builtin_alias=args.allow_builtin_yolo),
+        sam_checkpoint=resolve_sam_checkpoint(args.sam_checkpoint),
     )
 
     image = cv2.imread(str(args.image))
@@ -65,6 +71,8 @@ def main() -> None:
     json_path.write_text(json.dumps(result, indent=2))
     cv2.imwrite(str(image_path), annotated)
 
+    for line in format_runtime_report(analyzer.runtime_summary(), analyzer.runtime_warnings()):
+        print(line)
     print(f"json: {json_path}")
     print(f"image: {image_path}")
     print(json.dumps(result, indent=2))

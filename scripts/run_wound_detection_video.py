@@ -11,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from vision.video_processing import VideoProcessor
 from vision.demo_profiles import get_demo_profile, parse_roi
+from vision.runtime import format_runtime_report, resolve_sam_checkpoint, resolve_yolo_weights
 from vision.wound_detection import WoundAnalyzer
 
 
@@ -51,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to SAM checkpoint",
     )
     parser.add_argument(
+        "--allow-builtin-yolo",
+        action="store_true",
+        help="Allow the canonical yolov8n.pt alias to resolve through Ultralytics if local weights are missing",
+    )
+    parser.add_argument(
         "--demo-profile",
         choices=("none", "auto"),
         default="none",
@@ -82,8 +88,8 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     analyzer = WoundAnalyzer(
-        yolo_weights=str(args.yolo_weights) if args.yolo_weights.exists() else None,
-        sam_checkpoint=str(args.sam_checkpoint) if args.sam_checkpoint.exists() else None,
+        yolo_weights=resolve_yolo_weights(args.yolo_weights, allow_builtin_alias=args.allow_builtin_yolo),
+        sam_checkpoint=resolve_sam_checkpoint(args.sam_checkpoint),
     )
     demo_profile = get_demo_profile(args.video) if args.demo_profile == "auto" else None
     analysis_roi = parse_roi(args.roi) if args.roi else None
@@ -114,6 +120,8 @@ def main() -> None:
     json_path = args.output_dir / f"{args.video.stem}_video_wounds.json"
     json_path.write_text(json.dumps(result, indent=2))
 
+    for line in format_runtime_report(analyzer.runtime_summary(), analyzer.runtime_warnings()):
+        print(line)
     if demo_profile is not None:
         print(f"demo-profile: {demo_profile.name}")
         if demo_profile.note:

@@ -133,6 +133,25 @@ class WoundAnalyzer:
             return "heuristic+sam"
         return "heuristic"
 
+    def runtime_summary(self) -> dict[str, str]:
+        return {
+            "detection_mode": self.detection_mode(),
+            "person_detection": "yolo" if self.yolo_model is not None else "full-frame heuristic",
+            "wound_refinement": "sam" if self.sam_predictor is not None else "color/contour heuristic",
+        }
+
+    def runtime_warnings(self) -> list[str]:
+        warnings: list[str] = []
+        if self.yolo_model is None:
+            warnings.append(
+                "YOLO person detection is unavailable; multi-casualty ranking may be less reliable on unconstrained footage."
+            )
+        if self.sam_predictor is None:
+            warnings.append(
+                "SAM wound refinement is unavailable; wound extents rely on color and contour heuristics."
+            )
+        return warnings
+
     def _load_yolo(self, weights: Optional[str]) -> Optional[object]:
         if not weights or YOLO is None:
             return None
@@ -189,9 +208,52 @@ class WoundAnalyzer:
                 )
 
         if rois:
+            rois = self._filter_candidate_person_rois(rois, image_shape=image.shape[:2])
             return rois, True
         h, w = image.shape[:2]
         return [(0, 0, w, h)], False
+
+    def _filter_candidate_person_rois(
+        self,
+        rois: Sequence[Tuple[int, int, int, int]],
+        *,
+        image_shape: Tuple[int, int],
+    ) -> List[Tuple[int, int, int, int]]:
+        if len(rois) <= 2:
+            return list(rois)
+
+        scored = [
+            (self._casualty_roi_score(roi, image_shape=image_shape), roi)
+            for roi in rois
+        ]
+        scored.sort(key=lambda item: item[0], reverse=True)
+        best_score = scored[0][0]
+        keep = [
+            roi
+            for score, roi in scored
+            if score >= max(0.22, best_score - 0.18)
+        ]
+        if not keep:
+            keep = [scored[0][1]]
+        return keep[:3]
+
+    def _casualty_roi_score(
+        self,
+        roi: Tuple[int, int, int, int],
+        *,
+        image_shape: Tuple[int, int],
+    ) -> float:
+        image_height, image_width = image_shape
+        x, y, w, h = roi
+        image_area = max(image_height * image_width, 1)
+        area_ratio = (w * h) / image_area
+        aspect_ratio = w / max(h, 1)
+        center_y = (y + (h / 2.0)) / max(image_height, 1)
+
+        prone_score = min(max((aspect_ratio - 0.55) / 0.8, 0.0), 1.0)
+        area_score = min(area_ratio / 0.12, 1.0)
+        lower_frame_score = min(max((center_y - 0.2) / 0.55, 0.0), 1.0)
+        return round((0.45 * prone_score) + (0.35 * area_score) + (0.2 * lower_frame_score), 3)
 
     def _find_wound_candidates(self, image: np.ndarray) -> List[CandidateRegion]:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
