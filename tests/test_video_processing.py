@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from vision.demo_profiles import get_demo_profile
+from vision.tracker import Track
 from vision.video_processing import VideoProcessor
 from vision.wound_detection import WoundAnalyzer
 
@@ -205,6 +206,72 @@ class BlinkingFakeAnalyzer:
         return "heuristic"
 
 
+class MultiTrackBlinkingFakeAnalyzer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def detect_person_rois(self, image):
+        return [(0, 0, 90, image.shape[0]), (100, 0, 90, image.shape[0])]
+
+    def analyze_image(self, image, pixels_per_cm=None):
+        responses = [
+            [
+                {
+                    "location": {"x": 18, "y": 40, "width": 22, "height": 24},
+                    "severity": 0.67,
+                    "type": "laceration",
+                    "location_type": "torso",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 10.6,
+                    "confidence": 0.9,
+                    "mask_area_px": 420,
+                    "notes": "first casualty wound",
+                }
+            ],
+            [
+                {
+                    "location": {"x": 20, "y": 42, "width": 22, "height": 24},
+                    "severity": 0.69,
+                    "type": "laceration",
+                    "location_type": "torso",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 10.9,
+                    "confidence": 0.91,
+                    "mask_area_px": 432,
+                    "notes": "first casualty wound",
+                },
+                {
+                    "location": {"x": 122, "y": 46, "width": 24, "height": 22},
+                    "severity": 0.5,
+                    "type": "abrasion",
+                    "location_type": "limb",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 6.5,
+                    "confidence": 0.71,
+                    "mask_area_px": 255,
+                    "notes": "second casualty wound",
+                },
+            ],
+        ]
+        wounds = responses[min(self.calls, len(responses) - 1)]
+        self.calls += 1
+        return {
+            "wounds_detected": True,
+            "wound_count": len(wounds),
+            "wounds": wounds,
+            "overall_severity": 1.0,
+            "priority_suggestion": "RED",
+            "confidence": 0.9,
+            "image_quality": 0.88,
+        }
+
+    def detection_mode(self):
+        return "heuristic"
+
+
 class VideoProcessingTests(unittest.TestCase):
     def test_recv_updates_state_and_keeps_track_stable(self) -> None:
         fake_state = FakeState()
@@ -341,6 +408,43 @@ class VideoProcessingTests(unittest.TestCase):
         self.assertEqual(analysis["wound_count"], 1)
         self.assertEqual(len(analysis["wounds"]), 1)
 
+    def test_temporal_stabilization_keeps_new_wound_when_multiple_tracks_present(self) -> None:
+        processor = VideoProcessor(MultiTrackBlinkingFakeAnalyzer())
+        frame = np.full((160, 220, 3), 150, dtype=np.uint8)
+
+        processor.recv(frame)
+        processor.recv(frame)
+
+        self.assertIsNotNone(processor.last_result)
+        analysis = processor.last_result["analysis"]
+        self.assertEqual(analysis["wound_count"], 2)
+        scene_summary = processor.last_result["scene_summary"]
+        self.assertEqual(scene_summary["tracked_casualties"], 2)
+
+    def test_match_wound_to_track_prefers_best_overlap_when_center_is_ambiguous(self) -> None:
+        processor = VideoProcessor(FakeAnalyzer())
+        wound = {
+            "location": {"x": 74, "y": 18, "width": 40, "height": 26},
+            "severity": 0.4,
+            "type": "abrasion",
+            "location_type": "limb",
+            "bleeding": True,
+            "bleeding_detected": True,
+            "size_cm2": 4.3,
+            "confidence": 0.8,
+            "mask_area_px": 220,
+            "notes": "edge overlap",
+        }
+        tracks = [
+            Track(track_id=1, alias="A1", bbox=(0, 0, 60, 80), last_seen_ts=0.0),
+            Track(track_id=2, alias="A2", bbox=(90, 0, 170, 80), last_seen_ts=0.0),
+        ]
+
+        match = processor._match_wound_to_track(wound, tracks)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.track_id, 2)
+
     def test_process_video_clip_window_shortens_output_duration(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -378,6 +482,22 @@ class VideoProcessingTests(unittest.TestCase):
 
             self.assertGreaterEqual(len(result["frames"]), 1)
             self.assertEqual(result["frames"][0]["frame_index"], 0)
+
+    def test_process_video_resets_tracking_state_between_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            video_path = tmp_path / "input.avi"
+            self._write_test_video(video_path)
+
+            processor = VideoProcessor(FakeAnalyzer())
+            first = processor.process_video(video_path, output_dir=tmp_path / "first", frame_stride=1)
+            first_last_frame = processor.last_result["frame_index"]
+            second = processor.process_video(video_path, output_dir=tmp_path / "second", frame_stride=1)
+            second_last_frame = processor.last_result["frame_index"]
+
+            self.assertEqual(first["frames"][0]["frame_index"], 0)
+            self.assertEqual(second["frames"][0]["frame_index"], 0)
+            self.assertEqual(first_last_frame, second_last_frame)
 
     def _write_test_video(self, path: Path) -> None:
         writer = cv2.VideoWriter(

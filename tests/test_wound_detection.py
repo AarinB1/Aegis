@@ -127,6 +127,20 @@ class WoundDetectionTests(unittest.TestCase):
 
         self.assertTrue(analyzer._is_plausible_candidate(candidate, image_shape=(640, 640)))
 
+    def test_filters_person_rois_toward_casualty_like_boxes(self) -> None:
+        analyzer = WoundAnalyzer()
+        rois = [
+            (20, 40, 90, 320),
+            (160, 30, 92, 330),
+            (260, 180, 300, 150),
+            (610, 20, 85, 310),
+        ]
+
+        filtered = analyzer._filter_candidate_person_rois(rois, image_shape=(720, 1280))
+
+        self.assertIn((260, 180, 300, 150), filtered)
+        self.assertLess(len(filtered), len(rois))
+
 
 if __name__ == "__main__":
     unittest.main()
