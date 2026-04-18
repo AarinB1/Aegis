@@ -90,6 +90,17 @@ def controls() -> None:
         unsafe_allow_html=True,
     )
 
+    st.markdown(
+        f"""
+        <div class="sidebar-section" style="margin-top:0;padding-top:0;border-top:0;">
+            <div class="card-kicker">{hud_label("Navigation")}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.page_link("pages/1_Dashboard.py", label="◆ Dashboard", use_container_width=True)
+    st.page_link("pages/2_Tactical_Map.py", label="Tactical Map", use_container_width=True)
+
     current_ai_enabled = app_state.is_ai_enabled()
     ai_enabled = st.toggle("AI Enabled", value=current_ai_enabled)
     if ai_enabled != current_ai_enabled:

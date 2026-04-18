@@ -226,6 +226,20 @@ The dashboard will play a pre-recorded video and fire scripted suggestions,
 voice commands, and a MEDEVAC trigger over a 90-second loop. Zero external
 dependencies.
 
+## Tactical Map
+
+Access the Tactical Map from the left sidebar after launching `streamlit run ui/app.py`. The app now exposes a native multi-page layout with `Dashboard` and `Tactical Map` views.
+
+The Tactical Map shows a stylized overhead scene as a live SVG instrument: a fixed combat medic at center, deterministic casualty markers colored by triage, live casualty counts in the map header, hover tooltips, and a selection line from medic to the currently selected casualty.
+
+The right-side panel updates by selection type:
+
+- No selection shows a prompt to click a casualty on the map.
+- Selecting the medic shows a quick handoff card with a link back to the dashboard view.
+- Selecting a casualty shows identity and triage, live vision suggestions and wound summaries, intervention history, and a status footer with the casualty's live/dead indicator plus MARCH completion.
+
+The AUDIO section on the Tactical Map is intentionally stubbed as a reserved placeholder pending Neal's pipeline integration.
+
 ---
 
 ## Voice Commands
