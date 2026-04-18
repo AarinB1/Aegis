@@ -91,6 +91,42 @@ class WoundDetectionTests(unittest.TestCase):
         self.assertFalse(wound.bleeding)
         self.assertEqual(wound.location_type, "limb")
 
+    def test_rejects_elongated_sparse_strap_like_candidate(self) -> None:
+        analyzer = WoundAnalyzer()
+        candidate = CandidateRegion(
+            bbox=(420, 600, 92, 233),
+            mask=np.zeros((1080, 1920), dtype=np.uint8),
+            area_px=4373,
+            mean_bgr=(38.0, 64.0, 107.0),
+            mean_hsv=(6.2, 138.9, 107.2),
+            redness_ratio=1.0,
+            blood_ratio=1.0,
+            orange_ratio=0.822,
+            purple_ratio=0.0,
+            person_roi=(0, 0, 1920, 1080),
+            person_detected=False,
+        )
+
+        self.assertFalse(analyzer._is_plausible_candidate(candidate, image_shape=(1080, 1920)))
+
+    def test_keeps_long_cut_candidate_with_good_fill(self) -> None:
+        analyzer = WoundAnalyzer()
+        candidate = CandidateRegion(
+            bbox=(229, 144, 202, 82),
+            mask=np.zeros((640, 640), dtype=np.uint8),
+            area_px=4757,
+            mean_bgr=(44.0, 60.0, 152.0),
+            mean_hsv=(4.0, 180.0, 150.0),
+            redness_ratio=1.0,
+            blood_ratio=0.999,
+            orange_ratio=1.0,
+            purple_ratio=0.0,
+            person_roi=(0, 0, 640, 640),
+            person_detected=False,
+        )
+
+        self.assertTrue(analyzer._is_plausible_candidate(candidate, image_shape=(640, 640)))
+
 
 if __name__ == "__main__":
     unittest.main()
