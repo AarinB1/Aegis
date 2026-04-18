@@ -1,3 +1,11 @@
+import sys
+
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from triage_engine import get_priority
+
 class SimCasualty:
     def __init__(self, cid, location, audio_file, image_file, priority, output_script):
         self.id = cid
@@ -31,8 +39,34 @@ def get_casualties():
         ]
     return casualties
 
-# def evaluate_all():
-#     for c in casualties:
-#         evaluate_casualty(c)
-#     return casualties
+from schema import Casualty, Wound, TriageCategory, RespiratoryStatus
 
+def sim_to_real(sim):
+    return Casualty(
+        casualty_id=sim.id,
+        triage_category=TriageCategory.UNASSESSED,
+        responsive=True,
+        respiratory_status=RespiratoryStatus.UNKNOWN,
+        respiratory_rate=20,
+        wounds=[
+            Wound(
+                location="unknown",
+                area_cm2=5.0,
+                severity="moderate",
+                active_bleeding=True,
+                ai_confidence=0.8
+            )
+        ]
+    )
+
+
+def evaluate_all():
+    casualties = get_casualties()
+    results = []
+    for sim in casualties:
+        real = sim_to_real(sim)
+        priority = get_priority(real)
+        sim.priority = priority
+        results.append(sim)
+
+    return results
