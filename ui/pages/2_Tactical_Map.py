@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import html
+import math
 from pathlib import Path
 import re
 import sys
+from types import MethodType
+from urllib.parse import quote
 
 import streamlit as st
 
@@ -13,10 +17,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from schema import Casualty, TriageCategory
+import scenario_ranker as scenario_ranker_module
+from scenario_ranker import rank_roster
+from schema import AISuggestion, Casualty, TriageCategory
 from shared.state import app_state
 from scripts.seed_fake_data import seed
+from triage_engine import get_priority_with_reasoning, start_triage_engine
 from ui.components.controls import controls
+from ui.components.simulation_seeder import get_simulation_assets, resolve_sim_asset
 from ui.theme import (
     BACKGROUND,
     BORDER,
@@ -39,10 +47,20 @@ from ui.theme import (
 
 MAP_WIDTH = 1000
 MAP_HEIGHT = 600
-MEDIC_X = 500
-MEDIC_Y = 300
-SAFE_PADDING = 36
-VISION_SOURCE = "#3B5F7C"
+SAFE_PADDING = 56
+COMPOUND_LEFT = 220
+COMPOUND_TOP = 180
+COMPOUND_RIGHT = 640
+COMPOUND_BOTTOM = 420
+MEDIC_COVERAGE_RADIUS = 180
+MEDIC_ZONE_RADIUS = 200
+UNASSIGNED_DISTANCE = 250
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
+MEDICS = (
+    {"id": "MEDIC_HAYES", "label": "MEDIC · SGT HAYES", "name": "SGT HAYES", "x": 350, "y": 280, "css": "medic-one"},
+    {"id": "MEDIC_RIOS", "label": "MEDIC · CPL RIOS", "name": "CPL RIOS", "x": 650, "y": 340, "css": "medic-two"},
+)
 
 TRIAGE_MARK_STYLES = {
     TriageCategory.IMMEDIATE: {"fill": RED, "stroke": "#FAFAF6"},
@@ -51,6 +69,24 @@ TRIAGE_MARK_STYLES = {
     TriageCategory.EXPECTANT: {"fill": GRAY, "stroke": "#FAFAF6"},
     TriageCategory.DECEASED: {"fill": TEXT_PRIMARY, "stroke": "#FAFAF6"},
     TriageCategory.UNASSESSED: {"fill": "none", "stroke": GRAY},
+}
+
+LOCAL_PRIORITY_RANK = {
+    TriageCategory.IMMEDIATE: 0,
+    TriageCategory.DELAYED: 1,
+    TriageCategory.MINIMAL: 2,
+    TriageCategory.UNASSESSED: 3,
+    TriageCategory.EXPECTANT: 4,
+    TriageCategory.DECEASED: 5,
+}
+
+PRIORITY_VALUE_TO_CATEGORY = {
+    "red": TriageCategory.IMMEDIATE,
+    "yellow": TriageCategory.DELAYED,
+    "green": TriageCategory.MINIMAL,
+    "white": TriageCategory.UNASSESSED,
+    "gray": TriageCategory.EXPECTANT,
+    "black": TriageCategory.DECEASED,
 }
 
 STYLE_BLOCK = f"""
@@ -67,7 +103,6 @@ STYLE_BLOCK = f"""
     --text-muted: {TEXT_MUTED};
     --gold: {GOLD};
     --shadow: {SHADOW};
-    --vision: {VISION_SOURCE};
     --font-serif: {FONT_SERIF_DISPLAY};
     --font-sans: {FONT_SANS};
     --font-mono: {FONT_MONO};
@@ -117,7 +152,7 @@ header[data-testid="stHeader"] {{
 .block-container {{
     padding-top: 1.25rem;
     padding-bottom: 2rem;
-    max-width: 1440px;
+    max-width: 1480px;
 }}
 
 .hud-label,
@@ -192,7 +227,7 @@ header[data-testid="stHeader"] {{
     border-radius: 999px;
     font-family: var(--font-sans);
     font-weight: 500;
-    min-height: 2.65rem;
+    min-height: 2.6rem;
     transition: all 120ms ease;
 }}
 
@@ -219,25 +254,18 @@ header[data-testid="stHeader"] {{
     color: var(--gold);
 }}
 
-.tactical-layout {{
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
-    gap: 1rem;
-    align-items: start;
-}}
-
-.tactical-card {{
+div[data-testid="stVerticalBlockBorderWrapper"] {{
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: 16px;
     box-shadow: var(--shadow);
 }}
 
-.map-shell {{
-    padding: 0.75rem;
+div[data-testid="stVerticalBlockBorderWrapper"] > div {{
+    padding: 0.9rem 1rem 1rem;
 }}
 
-.map-shell svg {{
+.map-card svg {{
     width: 100%;
     height: auto;
     display: block;
@@ -274,13 +302,12 @@ header[data-testid="stHeader"] {{
     letter-spacing: 0.08em;
 }}
 
-.medic-group:hover .medic-diamond {{
-    fill: #c8951b;
-}}
-
-.medic-group:hover .medic-label {{
-    text-decoration: underline;
-    text-underline-offset: 2px;
+.quadrant-label {{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    fill: rgba(26, 26, 26, 0.3);
 }}
 
 .hover-glow {{
@@ -289,20 +316,36 @@ header[data-testid="stHeader"] {{
     pointer-events: none;
 }}
 
-.map-contact:hover .hover-glow {{
-    opacity: 0.15;
+.map-contact:hover .hover-glow,
+.medic-group:hover .hover-glow {{
+    opacity: 0.14;
 }}
 
-.pulse-ring {{
+.pulse-ring,
+.selected-reticle,
+.priority-reticle,
+.ping-ring {{
     transform-origin: center;
     transform-box: fill-box;
-    animation: pulseRing 1.2s ease-out infinite;
-    opacity: 0.8;
     pointer-events: none;
 }}
 
+.pulse-ring {{
+    animation: pulseRing 1.2s ease-out infinite;
+    opacity: 0.82;
+}}
+
 .reticle-rotate {{
-    animation: reticleSpin 9s linear infinite;
+    animation: reticleSpin 10s linear infinite;
+}}
+
+.priority-reticle {{
+    opacity: 0.2;
+    animation-duration: 22s;
+}}
+
+.ping-ring {{
+    animation: suggestionPing 0.8s ease-out 1;
 }}
 
 .tooltip-fo {{
@@ -323,11 +366,11 @@ header[data-testid="stHeader"] {{
     border-radius: 8px;
     padding: 10px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    width: 198px;
-    min-height: 64px;
+    width: 220px;
+    min-height: 92px;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    gap: 0.35rem;
 }}
 
 .tooltip-title {{
@@ -337,43 +380,50 @@ header[data-testid="stHeader"] {{
     line-height: 1.1;
 }}
 
-.tooltip-copy {{
-    font-family: var(--font-sans);
-    font-size: 11px;
-    color: var(--text-muted);
-    line-height: 1.35;
-    margin-top: 6px;
+.tooltip-triage,
+.tooltip-meta,
+.tooltip-audio,
+.mono-line,
+.detail-kicker,
+.detail-rank,
+.stub-label {{
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+}}
+
+.tooltip-triage,
+.tooltip-audio {{
+    font-size: 10px;
+    color: var(--text-primary);
 }}
 
 .tooltip-meta {{
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-primary);
-    line-height: 1.2;
+    font-size: 10px;
+    color: var(--text-muted);
     text-align: right;
-    margin-top: 6px;
 }}
 
-.detail-shell {{
-    padding: 1.25rem 1.2rem;
+.tooltip-copy {{
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-muted);
 }}
 
-.detail-section {{
-    padding: 1.05rem 0 0.95rem;
-    border-top: 1px solid var(--divider);
+.tooltip-dot,
+.triage-dot {{
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    margin-right: 0.35rem;
+    vertical-align: middle;
 }}
 
-.detail-section:first-child {{
-    padding-top: 0;
-    border-top: 0;
-}}
-
-.section-kicker {{
+.detail-kicker {{
     color: var(--text-muted);
     font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    margin-bottom: 0.7rem;
+    margin-bottom: 0.45rem;
 }}
 
 .detail-title {{
@@ -385,160 +435,91 @@ header[data-testid="stHeader"] {{
 }}
 
 .detail-title.small {{
-    font-size: 1.6rem;
+    font-size: 1.55rem;
 }}
 
 .detail-copy {{
     color: var(--text-muted);
-    font-size: 0.97rem;
+    font-size: 0.95rem;
     line-height: 1.6;
-    margin-top: 0.6rem;
 }}
 
-.detail-copy.tight {{
-    margin-top: 0.4rem;
-}}
-
-.selection-empty {{
-    min-height: 560px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-}}
-
-.selection-empty .detail-copy {{
-    max-width: 18rem;
-    margin-left: auto;
-    margin-right: auto;
-}}
-
-.empty-glyph {{
-    color: rgba(184, 130, 15, 0.24);
-    font-size: 3rem;
-    line-height: 1;
-    margin-top: 1.4rem;
+.detail-divider {{
+    margin: 1rem 0;
+    border-top: 1px solid var(--divider);
 }}
 
 .identity-line {{
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.55rem;
     font-family: var(--font-mono);
     letter-spacing: 0.18em;
     text-transform: uppercase;
     font-size: 0.76rem;
-    margin-top: 0.75rem;
+    margin-top: 0.7rem;
 }}
 
-.status-dot {{
-    width: 0.65rem;
-    height: 0.65rem;
-    border-radius: 999px;
-    display: inline-block;
-    flex: 0 0 0.65rem;
-}}
-
+.detail-rank,
 .mono-line {{
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
+    font-size: 0.76rem;
     color: var(--text-muted);
     margin-top: 0.7rem;
 }}
 
-.vision-row {{
+.vision-row,
+.intervention-row,
+.info-row,
+.queue-row,
+.zone-row {{
     display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    font-size: 0.92rem;
-    line-height: 1.35;
-    padding: 0.48rem 0;
-    border-top: 1px solid rgba(225, 220, 205, 0.6);
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.6rem 0;
+    border-top: 1px solid rgba(225, 220, 205, 0.72);
 }}
 
-.vision-row:first-of-type {{
+.vision-row:first-of-type,
+.intervention-row:first-of-type,
+.info-row:first-of-type,
+.zone-row:first-of-type {{
     border-top: 0;
     padding-top: 0.1rem;
 }}
 
-.vision-dot {{
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 999px;
-    background: var(--vision);
-    flex: 0 0 0.5rem;
-}}
-
-.vision-copy {{
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.vision-meta,
+.intervention-meta,
+.info-meta {{
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
     white-space: nowrap;
-    color: var(--text-primary);
 }}
 
-.vision-meta {{
-    flex: 0 0 auto;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-muted);
+.italic-diagnosis,
+.rationale-copy {{
+    font-family: var(--font-serif);
+    font-style: italic;
+    color: #5f5a52;
 }}
 
-.vision-summary {{
-    margin-top: 0.8rem;
-    color: var(--text-muted);
-    font-size: 0.88rem;
-    line-height: 1.55;
-}}
-
-.wound-row,
-.intervention-row {{
-    display: flex;
-    justify-content: space-between;
-    gap: 0.9rem;
-    align-items: flex-start;
-    padding: 0.5rem 0;
-    border-top: 1px solid rgba(225, 220, 205, 0.6);
-}}
-
-.wound-row:first-of-type,
-.intervention-row:first-of-type {{
-    margin-top: 0.7rem;
-}}
-
-.wound-copy,
-.intervention-copy {{
-    color: var(--text-primary);
-    font-size: 0.9rem;
-    line-height: 1.45;
-}}
-
-.wound-meta,
-.intervention-meta {{
-    flex: 0 0 auto;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-    text-align: right;
-}}
-
-.muted-copy {{
-    color: var(--text-muted);
-    font-size: 0.92rem;
+.italic-diagnosis {{
+    font-size: 1rem;
     line-height: 1.6;
+    margin-top: 0.45rem;
+}}
+
+.rationale-copy {{
+    font-size: 0.86rem;
+    line-height: 1.55;
+    margin-top: 0.45rem;
 }}
 
 .audio-stub {{
     opacity: 0.4;
-    min-height: 120px;
-    position: relative;
 }}
 
 .audio-slot {{
@@ -571,16 +552,6 @@ header[data-testid="stHeader"] {{
     padding: 0 0.9rem;
 }}
 
-.audio-slot-label {{
-    position: relative;
-    z-index: 1;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-}}
-
 .audio-awaiting {{
     margin-top: 0.7rem;
     text-align: right;
@@ -601,92 +572,204 @@ header[data-testid="stHeader"] {{
     border-top: 1px solid rgba(225, 220, 205, 0.6);
 }}
 
-.status-pill {{
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
+.status-pill,
+.march-meta,
+.queue-subtitle,
+.queue-select,
+.zone-select,
+.clip-meta,
+.hint-copy {{
     font-family: var(--font-mono);
-    font-size: 0.76rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--text-primary);
 }}
 
+.status-pill,
 .march-meta {{
-    font-family: var(--font-mono);
     font-size: 0.76rem;
-    letter-spacing: 0.16em;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}}
+
+.queue-title {{
+    font-family: var(--font-serif);
+    font-size: 1.25rem;
+    line-height: 1;
+    margin: 0;
+}}
+
+.queue-subtitle,
+.zone-meta,
+.clip-meta,
+.hint-copy {{
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--text-muted);
 }}
 
+.queue-row {{
+    gap: 0.75rem;
+}}
+
+.queue-row.top {{
+    background: rgba(184, 130, 15, 0.06);
+    border-radius: 12px;
+    padding: 0.75rem 0.65rem;
+    margin-bottom: 0.3rem;
+}}
+
+.queue-row.selected {{
+    outline: 1px solid rgba(184, 130, 15, 0.45);
+    outline-offset: -1px;
+    border-radius: 12px;
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+}}
+
+.queue-rank {{
+    width: 1.5rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    letter-spacing: 0.12em;
+}}
+
+.queue-id {{
+    font-family: var(--font-serif);
+    font-size: 1rem;
+    line-height: 1.15;
+}}
+
+.queue-concern {{
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    line-height: 1.4;
+    margin-top: 0.15rem;
+}}
+
+.queue-select,
+.zone-select {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.45rem 0.72rem;
+    border-radius: 999px;
+    border: 1px solid rgba(184, 130, 15, 0.45);
+    color: var(--gold);
+    text-decoration: none;
+    white-space: nowrap;
+    font-size: 0.7rem;
+    transition: all 120ms ease;
+}}
+
+.queue-select:hover,
+.zone-select:hover {{
+    background: rgba(184, 130, 15, 0.06);
+    border-color: var(--gold);
+}}
+
+.empty-panel,
+.placeholder-box {{
+    color: var(--text-muted);
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    border: 1px dashed rgba(184, 130, 15, 0.25);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.32);
+}}
+
+.placeholder-box {{
+    min-height: 200px;
+    margin-top: 0.6rem;
+}}
+
+.map-note,
 .note-copy {{
-    margin-top: 0.85rem;
     color: var(--text-muted);
     font-size: 0.86rem;
     line-height: 1.55;
 }}
 
-.dashboard-link {{
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-top: 1.1rem;
-    padding: 0.78rem 1rem;
-    border-radius: 999px;
-    border: 1px solid var(--gold);
-    color: var(--gold);
-    text-decoration: none;
-    font-size: 0.92rem;
-    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+.medic-patrol {{
+    transform-box: fill-box;
+    transform-origin: center;
+    animation-duration: 10s;
+    animation-iteration-count: infinite;
+    animation-timing-function: ease-in-out;
 }}
 
-.dashboard-link:hover {{
-    background: rgba(184, 130, 15, 0.06);
-    color: #9e700d;
-    border-color: #9e700d;
+.medic-patrol.medic-one {{
+    animation-name: medicPatrolOne;
+}}
+
+.medic-patrol.medic-two {{
+    animation-name: medicPatrolTwo;
 }}
 
 @keyframes pulseRing {{
-    0% {{
-        opacity: 0.8;
-        transform: scale(1);
-    }}
-
-    100% {{
-        opacity: 0;
-        transform: scale(2);
-    }}
+    0% {{ opacity: 0.8; transform: scale(1); }}
+    100% {{ opacity: 0; transform: scale(2); }}
 }}
 
 @keyframes reticleSpin {{
-    from {{
-        transform: rotate(0deg);
-    }}
-
-    to {{
-        transform: rotate(360deg);
-    }}
+    from {{ transform: rotate(0deg); }}
+    to {{ transform: rotate(360deg); }}
 }}
 
-@media (max-width: 1100px) {{
-    .tactical-layout {{
-        grid-template-columns: 1fr;
-    }}
+@keyframes suggestionPing {{
+    0% {{ opacity: 0.7; transform: scale(1); }}
+    100% {{ opacity: 0; transform: scale(2.5); }}
+}}
 
-    .selection-empty {{
-        min-height: 280px;
-    }}
+@keyframes medicPatrolOne {{
+    0% {{ transform: translate(0px, 0px); }}
+    25% {{ transform: translate(12px, -10px); }}
+    50% {{ transform: translate(-8px, 9px); }}
+    75% {{ transform: translate(15px, 6px); }}
+    100% {{ transform: translate(0px, 0px); }}
+}}
+
+@keyframes medicPatrolTwo {{
+    0% {{ transform: translate(0px, 0px); }}
+    25% {{ transform: translate(-13px, 8px); }}
+    50% {{ transform: translate(10px, -11px); }}
+    75% {{ transform: translate(-6px, 12px); }}
+    100% {{ transform: translate(0px, 0px); }}
 }}
 </style>
 """
 
 
+@dataclass(frozen=True)
+class SuggestionView:
+    source: str
+    text: str
+    confidence: float
+    timestamp: datetime | None
+
+
+class _RankerStateProxy:
+    def get_pending_suggestions(self):
+        return app_state.get_pending_suggestions()
+
+    def upsert_casualty(self, casualty: Casualty) -> None:
+        return None
+
+    def audit(self, source: str, action: str, details: dict) -> None:
+        return None
+
+
 def _ensure_seeded() -> None:
+    st.session_state.setdefault("_scenario_state", "bootstrap")
     if st.session_state.get("_demo_mode_selection") == "Live Vision":
+        return
+    if st.session_state.get("_scenario_state") in {"simulation", "off", "live_vision"}:
         return
     if not app_state.get_roster():
         seed()
+        st.session_state["_scenario_state"] = "baseline"
 
 
 def _query_value(key: str) -> str | None:
@@ -698,7 +781,7 @@ def _query_value(key: str) -> str | None:
     return str(value)
 
 
-def _sync_selection(valid_ids: set[str]) -> str | None:
+def _sync_selection(valid_ids: set[str], medic_ids: set[str]) -> str | None:
     st.session_state.setdefault("selected_id", None)
     selected_query = _query_value("selected")
     if selected_query == "__clear__":
@@ -707,9 +790,17 @@ def _sync_selection(valid_ids: set[str]) -> str | None:
         st.session_state.selected_id = selected_query
 
     selected_id = st.session_state.selected_id
-    if selected_id not in valid_ids | {"MEDIC"}:
+    if selected_id not in valid_ids | medic_ids:
         st.session_state.selected_id = None
     return st.session_state.selected_id
+
+
+def _selection_link(selected_id: str) -> str:
+    return f"?selected={quote(selected_id, safe='')}"
+
+
+def _clear_selection_link() -> str:
+    return "?selected=__clear__"
 
 
 def _format_percent(value: float | None) -> int:
@@ -728,8 +819,98 @@ def _format_timestamp(value: datetime | None) -> str:
     return timestamp.strftime("%H:%M:%S")
 
 
+def _truncate(value: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _compact_markup(markup: str) -> str:
+    return re.sub(r">\s+<", "><", str(markup or "")).strip()
+
+
 def _pretty_text(value: str) -> str:
-    return value.replace("_", " ").strip().title()
+    return str(value or "").replace("_", " ").strip().title()
+
+
+def _triage_fill(category: TriageCategory) -> str:
+    style = TRIAGE_MARK_STYLES.get(category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])
+    return GRAY if style["fill"] == "none" else str(style["fill"])
+
+
+def _triage_dot_html(category: TriageCategory) -> str:
+    style = TRIAGE_MARK_STYLES.get(category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])
+    fill = "transparent" if style["fill"] == "none" else str(style["fill"])
+    return (
+        f'<span class="triage-dot" style="background:{fill};border:1.5px solid {style["stroke"]};"></span>'
+    )
+
+
+def _distance(point_a: tuple[int, int], point_b: tuple[int, int]) -> float:
+    dx = point_a[0] - point_b[0]
+    dy = point_a[1] - point_b[1]
+    return math.hypot(dx, dy)
+
+
+def _map_position_seed(casualty_id: str) -> int:
+    return int(hashlib.md5(casualty_id.encode("utf-8")).hexdigest()[:8], 16)
+
+
+def _clamp(value: int, lower: int, upper: int) -> int:
+    return max(lower, min(upper, value))
+
+
+def _stable_positions(casualties: list[Casualty]) -> dict[str, tuple[int, int]]:
+    positions: dict[str, tuple[int, int]] = {}
+    occupied = [(medic["x"], medic["y"]) for medic in MEDICS]
+    width = COMPOUND_RIGHT - COMPOUND_LEFT
+    height = COMPOUND_BOTTOM - COMPOUND_TOP
+
+    # Neal's current simulation lat/lon values are tightly clustered around the
+    # same point, so a literal projection collapses casualties into one blob.
+    # We instead derive stable pseudo-spatial positions from casualty_id and
+    # bias them toward the compound perimeter for a readable tactical cluster.
+    for casualty in sorted(casualties, key=lambda item: item.casualty_id):
+        seed_value = _map_position_seed(casualty.casualty_id)
+        edge = seed_value % 4
+
+        if edge == 0:
+            x = COMPOUND_LEFT + 36 + ((seed_value >> 5) % max(80, width - 72))
+            y = COMPOUND_TOP - 28 + ((seed_value >> 13) % 56)
+        elif edge == 1:
+            x = COMPOUND_RIGHT - 28 + ((seed_value >> 9) % 58)
+            y = COMPOUND_TOP + 34 + ((seed_value >> 3) % max(80, height - 68))
+        elif edge == 2:
+            x = COMPOUND_LEFT + 30 + ((seed_value >> 7) % max(80, width - 60))
+            y = COMPOUND_BOTTOM - 24 + ((seed_value >> 15) % 52)
+        else:
+            x = COMPOUND_LEFT - 34 + ((seed_value >> 11) % 58)
+            y = COMPOUND_TOP + 28 + ((seed_value >> 1) % max(80, height - 56))
+
+        x = _clamp(int(x), SAFE_PADDING, MAP_WIDTH - SAFE_PADDING)
+        y = _clamp(int(y), SAFE_PADDING, MAP_HEIGHT - SAFE_PADDING)
+
+        for step in range(28):
+            candidate = (x, y)
+            if all(_distance(candidate, existing) >= 62 for existing in occupied):
+                break
+            x = _clamp(x + 19 + (step * 5), SAFE_PADDING, MAP_WIDTH - SAFE_PADDING)
+            y = _clamp(y - 11 + (step * 7), SAFE_PADDING, MAP_HEIGHT - SAFE_PADDING)
+
+        positions[casualty.casualty_id] = (x, y)
+        occupied.append((x, y))
+
+    if positions and not any(_nearest_medic(position)[1] > UNASSIGNED_DISTANCE for position in positions.values()):
+        farthest_id = sorted(positions)[-1]
+        # Keep one deterministic outlier in the compound's outer ring so the
+        # tactical view can surface the red dashed "too far" assignment state.
+        positions[farthest_id] = (
+            _clamp(COMPOUND_RIGHT + 180, SAFE_PADDING, MAP_WIDTH - SAFE_PADDING),
+            _clamp(COMPOUND_TOP - 120, SAFE_PADDING, MAP_HEIGHT - SAFE_PADDING),
+        )
+
+    return positions
 
 
 def _top_wound_label(casualty: Casualty) -> str:
@@ -748,111 +929,197 @@ def _top_wound_label(casualty: Casualty) -> str:
     return _pretty_text(getattr(primary, "location", "unknown"))
 
 
-def _best_confidence(casualty: Casualty) -> int:
-    values = [float(getattr(wound, "ai_confidence", 0.0) or 0.0) for wound in casualty.wounds]
-    values.extend(float(getattr(item, "confidence", 0.0) or 0.0) for item in casualty.ai_suggestions_log)
-    return _format_percent(max(values, default=0.0))
+def _wound_summary(casualty: Casualty) -> str:
+    if not casualty.wounds:
+        return "No wound structures logged"
+    bleeding_count = sum(1 for wound in casualty.wounds if bool(getattr(wound, "active_bleeding", False)))
+    top = _top_wound_label(casualty)
+    return f"{len(casualty.wounds)} wounds · {bleeding_count} bleeding · top {top}"
 
 
-def _vision_items(casualty: Casualty) -> list[dict[str, str | int]]:
-    rows: list[dict[str, str | int]] = []
-    seen_keys: set[tuple[str, str, int]] = set()
+def _normalize_timestamp(value: object) -> datetime | None:
+    return value if isinstance(value, datetime) else None
 
-    for suggestion in casualty.ai_suggestions_log:
-        if str(getattr(suggestion, "source", "")).lower() != "vision":
-            continue
-        text = str(getattr(suggestion, "suggestion", "")).strip()
-        confidence = _format_percent(float(getattr(suggestion, "confidence", 0.0) or 0.0))
-        key = ("vision", text, confidence)
-        if key in seen_keys:
-            continue
-        rows.append({"text": text, "confidence": confidence})
-        seen_keys.add(key)
 
+def _timestamp_value(value: datetime | None) -> float:
+    if value is None:
+        return 0.0
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc).timestamp()
+    return value.timestamp()
+
+
+def _strip_casualty_prefix(text: str, casualty_id: str) -> str:
+    prefix = f"{casualty_id}:"
+    cleaned = text.strip()
+    if cleaned.startswith(prefix):
+        return cleaned[len(prefix) :].strip()
+    return cleaned
+
+
+def _pending_suggestions_map() -> dict[str, list[SuggestionView]]:
+    pending_by_casualty: dict[str, list[SuggestionView]] = {}
     for pending in app_state.get_pending_suggestions():
-        if pending.casualty_id != casualty.casualty_id or str(pending.source).lower() != "vision":
+        if not pending.casualty_id:
             continue
         raw = pending.raw
-        text = str(getattr(raw, "suggestion", getattr(pending, "raw", ""))).strip()
-        confidence = _format_percent(float(getattr(raw, "confidence", pending.confidence) or 0.0))
-        key = ("vision", text, confidence)
-        if key in seen_keys:
+        text = str(getattr(raw, "suggestion", "") or "")
+        if not text:
+            text = str(raw)
+        pending_by_casualty.setdefault(pending.casualty_id, []).append(
+            SuggestionView(
+                source=str(getattr(raw, "source", pending.source) or pending.source or "unknown"),
+                text=text,
+                confidence=float(getattr(raw, "confidence", pending.confidence) or pending.confidence or 0.0),
+                timestamp=_normalize_timestamp(getattr(raw, "timestamp", pending.created_at) or pending.created_at),
+            )
+        )
+    return pending_by_casualty
+
+
+def _suggestion_signature(item: SuggestionView) -> tuple[str, str, int, str]:
+    timestamp = item.timestamp.isoformat() if item.timestamp else ""
+    return (item.source.lower(), item.text.strip(), _format_percent(item.confidence), timestamp)
+
+
+def _casualty_suggestions(
+    casualty: Casualty,
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    *,
+    source: str | None = None,
+) -> list[SuggestionView]:
+    items: list[SuggestionView] = []
+    for suggestion in casualty.ai_suggestions_log:
+        items.append(
+            SuggestionView(
+                source=str(getattr(suggestion, "source", "unknown") or "unknown"),
+                text=str(getattr(suggestion, "suggestion", "") or ""),
+                confidence=float(getattr(suggestion, "confidence", 0.0) or 0.0),
+                timestamp=_normalize_timestamp(getattr(suggestion, "timestamp", None)),
+            )
+        )
+    items.extend(pending_by_casualty.get(casualty.casualty_id, []))
+
+    deduped: dict[tuple[str, str, int], SuggestionView] = {}
+    for item in items:
+        if not item.text.strip():
             continue
-        rows.append({"text": text, "confidence": confidence})
-        seen_keys.add(key)
-
-    return rows
-
-
-def _triage_status(casualty: Casualty) -> tuple[str, str]:
-    category = casualty.triage_category
-    if category == TriageCategory.DECEASED:
-        return (TEXT_PRIMARY, "DECEASED")
-    if category == TriageCategory.EXPECTANT:
-        return (GRAY, "EXPECTANT")
-    return (GREEN, "LIVE")
+        if source is not None and item.source.lower() != source.lower():
+            continue
+        key = (item.source.lower(), item.text.strip(), _format_percent(item.confidence))
+        previous = deduped.get(key)
+        if previous is None or (item.timestamp or datetime.min) > (previous.timestamp or datetime.min):
+            deduped[key] = item
+    return sorted(
+        deduped.values(),
+        key=lambda item: (_timestamp_value(item.timestamp), item.confidence, item.text),
+        reverse=True,
+    )
 
 
-def _map_position_seed(casualty_id: str) -> int:
-    return int(hashlib.md5(casualty_id.encode("utf-8")).hexdigest()[:8], 16)
+def _top_suggestion(casualty: Casualty, pending_by_casualty: dict[str, list[SuggestionView]]) -> SuggestionView | None:
+    suggestions = _casualty_suggestions(casualty, pending_by_casualty)
+    if not suggestions:
+        return None
+    return max(
+        suggestions,
+        key=lambda item: (
+            item.confidence,
+            _timestamp_value(item.timestamp),
+            0 if item.source.lower() == "fusion" else 1,
+        ),
+    )
 
 
-def _distance_sq(point_a: tuple[int, int], point_b: tuple[int, int]) -> int:
-    dx = point_a[0] - point_b[0]
-    dy = point_a[1] - point_b[1]
-    return (dx * dx) + (dy * dy)
+def _latest_suggestion_time(casualty: Casualty, pending_by_casualty: dict[str, list[SuggestionView]]) -> datetime | None:
+    suggestions = _casualty_suggestions(casualty, pending_by_casualty)
+    if not suggestions:
+        return None
+    latest = max(suggestions, key=lambda item: _timestamp_value(item.timestamp), default=None)
+    return latest.timestamp if latest else None
 
 
-def _stable_positions(casualties: list[Casualty]) -> dict[str, tuple[int, int]]:
-    positions: dict[str, tuple[int, int]] = {}
-    occupied = [(MEDIC_X, MEDIC_Y)]
-    x_span = MAP_WIDTH - (SAFE_PADDING * 2)
-    y_span = MAP_HEIGHT - (SAFE_PADDING * 2)
+def _simulation_asset(casualty_id: str, simulation_assets: dict[str, dict], kind: str) -> Path | None:
+    asset_value = simulation_assets.get(casualty_id, {}).get(kind)
+    if asset_value is None:
+        return None
+    return resolve_sim_asset(str(asset_value))
 
-    for casualty in sorted(casualties, key=lambda item: item.casualty_id):
-        seed_value = _map_position_seed(casualty.casualty_id)
-        x = SAFE_PADDING + (seed_value % x_span)
-        y = SAFE_PADDING + ((seed_value >> 11) % y_span)
 
-        for step in range(24):
-            candidate = (x, y)
-            if all(_distance_sq(candidate, existing) >= 70 * 70 for existing in occupied):
-                break
-            x = SAFE_PADDING + ((x - SAFE_PADDING + 83 + (step * 17)) % x_span)
-            y = SAFE_PADDING + ((y - SAFE_PADDING + 57 + (step * 11)) % y_span)
+def _diagnosis_text(casualty_id: str, simulation_assets: dict[str, dict]) -> str:
+    return str(simulation_assets.get(casualty_id, {}).get("diagnosis", "") or "").strip()
 
-        positions[casualty.casualty_id] = (x, y)
-        occupied.append((x, y))
 
-    return positions
+def _top_concern(casualty: Casualty, pending_by_casualty: dict[str, list[SuggestionView]], simulation_assets: dict[str, dict]) -> str:
+    top_suggestion = _top_suggestion(casualty, pending_by_casualty)
+    if top_suggestion is not None:
+        return _truncate(_strip_casualty_prefix(top_suggestion.text, casualty.casualty_id), 84)
+    if casualty.wounds:
+        return _truncate(_wound_summary(casualty), 84)
+    diagnosis = _diagnosis_text(casualty.casualty_id, simulation_assets)
+    if diagnosis:
+        return _truncate(diagnosis, 84)
+    return "Awaiting assessment"
+
+
+def _top_confidence(casualty: Casualty, pending_by_casualty: dict[str, list[SuggestionView]]) -> int:
+    top_suggestion = _top_suggestion(casualty, pending_by_casualty)
+    if top_suggestion is None:
+        return 0
+    return _format_percent(top_suggestion.confidence)
 
 
 def _tooltip_position(x: int, y: int) -> tuple[int, int]:
-    width = 220
-    height = 86
+    width = 232
+    height = 110
     offset = 18
-    left = x + offset if x <= MAP_WIDTH - width - 32 else x - width - offset
-    top = y - height - offset if y >= MAP_HEIGHT - height - 32 else y + offset
+    left = x + offset if x <= MAP_WIDTH - width - 28 else x - width - offset
+    top = y - height - offset if y >= MAP_HEIGHT - height - 28 else y + offset
     left = max(12, min(MAP_WIDTH - width - 12, left))
     top = max(12, min(MAP_HEIGHT - height - 12, top))
     return (left, top)
 
 
-def _tooltip_html(casualty: Casualty, x: int, y: int) -> str:
+def _tooltip_html(
+    casualty: Casualty,
+    x: int,
+    y: int,
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> str:
     tooltip_x, tooltip_y = _tooltip_position(x, y)
-    wound_count = len(casualty.wounds)
-    title = f"{casualty.casualty_id} · {triage_label(casualty.triage_category)}"
-    subtitle = f"{wound_count} wounds · top: {_top_wound_label(casualty)}"
-    meta = f"AI · {_best_confidence(casualty)}%"
+    concern = _wound_summary(casualty) if casualty.wounds else _diagnosis_text(casualty.casualty_id, simulation_assets)
+    concern = _truncate(concern or "Awaiting assessment", 80)
+    confidence = _top_confidence(casualty, pending_by_casualty)
+    audio_path = _simulation_asset(casualty.casualty_id, simulation_assets, "audio")
+    triage = triage_label(casualty.triage_category)
+    tooltip_title = html.escape(casualty.casualty_id)
+    audio_badge = '<div class="tooltip-audio">🎧 CLIP AVAILABLE</div>' if audio_path else ""
+    title_text = html.escape(f"{casualty.casualty_id} · {triage} · {concern}")
     return f"""
-    <foreignObject class="tooltip-fo" x="{tooltip_x}" y="{tooltip_y}" width="220" height="86">
+    <foreignObject class="tooltip-fo" x="{tooltip_x}" y="{tooltip_y}" width="232" height="110">
         <div xmlns="http://www.w3.org/1999/xhtml" class="tooltip-card">
-            <div class="tooltip-title">{html.escape(title)}</div>
-            <div class="tooltip-copy">{html.escape(subtitle)}</div>
-            <div class="tooltip-meta">{html.escape(meta)}</div>
+            <div class="tooltip-title">{tooltip_title}</div>
+            <div class="tooltip-triage">{_triage_dot_html(casualty.triage_category)}{html.escape(triage)}</div>
+            <div class="tooltip-copy">{html.escape(concern)}</div>
+            <div class="tooltip-meta">AI · {confidence}%</div>
+            {audio_badge}
         </div>
     </foreignObject>
+    <title>{title_text}</title>
     """
+
+
+def _corner_markers() -> str:
+    markers = []
+    for x, y in ((95, 95), (905, 95), (95, 505), (905, 505)):
+        markers.append(
+            f"""
+            <line x1="{x - 8}" y1="{y}" x2="{x + 8}" y2="{y}" stroke="{GOLD}" stroke-width="1.5" />
+            <line x1="{x}" y1="{y - 8}" x2="{x}" y2="{y + 8}" stroke="{GOLD}" stroke-width="1.5" />
+            """
+        )
+    return "".join(markers)
 
 
 def _grid_lines(step: int, stroke: str, stroke_width: float) -> str:
@@ -867,47 +1134,172 @@ def _grid_lines(step: int, stroke: str, stroke_width: float) -> str:
     return "".join(verticals + horizontals)
 
 
-def _corner_markers() -> str:
-    markers = []
-    for x, y in ((100, 100), (900, 100), (100, 500), (900, 500)):
-        markers.append(
-            f"""
-            <line x1="{x - 5}" y1="{y}" x2="{x + 5}" y2="{y}" stroke="{GOLD}" stroke-width="1.5" />
-            <line x1="{x}" y1="{y - 5}" x2="{x}" y2="{y + 5}" stroke="{GOLD}" stroke-width="1.5" />
-            """
-        )
-    return "".join(markers)
+def _terrain_pattern() -> str:
+    return f"""
+    <defs>
+        <pattern id="terrainPattern" x="0" y="0" width="180" height="120" patternUnits="userSpaceOnUse">
+            <path d="M0 20 C35 0 90 0 140 18 S210 42 180 62" fill="none" stroke="#D8D4C8" stroke-width="1" opacity="0.4" />
+            <path d="M-12 60 C25 42 74 42 122 60 S195 92 180 104" fill="none" stroke="#D8D4C8" stroke-width="1" opacity="0.4" />
+            <path d="M0 98 C44 78 96 82 148 100 S212 132 176 142" fill="none" stroke="#D8D4C8" stroke-width="1" opacity="0.4" />
+        </pattern>
+    </defs>
+    """
 
 
-def _selection_link(selected_id: str) -> str:
-    return f"?selected={html.escape(selected_id)}"
-
-
-def _map_svg(casualties: list[Casualty], selected_id: str | None) -> str:
-    positions = _stable_positions(casualties)
-    immediate_count = sum(1 for casualty in casualties if casualty.triage_category == TriageCategory.IMMEDIATE)
-    delayed_count = sum(1 for casualty in casualties if casualty.triage_category == TriageCategory.DELAYED)
-    status_text = (
-        f"{len(casualties)} CASUALTIES · {immediate_count} IMMEDIATE · "
-        f"{delayed_count} DELAYED · MEDIC ON SCENE"
+def _nearest_medic(position: tuple[int, int]) -> tuple[dict[str, object], float]:
+    return min(
+        ((medic, _distance(position, (int(medic["x"]), int(medic["y"])))) for medic in MEDICS),
+        key=lambda item: item[1],
     )
-    timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
-    selected_line = ""
 
-    if selected_id and selected_id in positions:
-        selected_x, selected_y = positions[selected_id]
-        selected_line = (
-            f'<line x1="{MEDIC_X}" y1="{MEDIC_Y}" x2="{selected_x}" y2="{selected_y}" '
-            f'stroke="{GOLD}" stroke-width="1" stroke-dasharray="4 4" opacity="0.5" />'
+
+def _category_from_ranker(priority_value: object, casualty: Casualty) -> TriageCategory:
+    if isinstance(priority_value, TriageCategory):
+        return priority_value
+    if isinstance(priority_value, str):
+        return PRIORITY_VALUE_TO_CATEGORY.get(priority_value.lower(), casualty.triage_category)
+    return casualty.triage_category
+
+
+def _fallback_ranking(
+    casualties: list[Casualty],
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> list[dict]:
+    rows = []
+    for casualty in casualties:
+        top_suggestion = _top_suggestion(casualty, pending_by_casualty)
+        rows.append(
+            {
+                "casualty_id": casualty.casualty_id,
+                "category": casualty.triage_category,
+                "confidence": top_suggestion.confidence if top_suggestion else 0.0,
+                "top_concern": _top_concern(casualty, pending_by_casualty, simulation_assets),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            LOCAL_PRIORITY_RANK.get(row["category"], 99),
+            -float(row["confidence"] or 0.0),
+            str(row["casualty_id"]),
+        )
+    )
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+    return rows
+
+
+def _ranked_roster(
+    casualties: list[Casualty],
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> list[dict]:
+    casualty_map = {casualty.casualty_id: casualty for casualty in casualties}
+    engine = start_triage_engine()
+    original_ranker_state = scenario_ranker_module.app_state
+    original_analyze = engine.analyze_casualty
+
+    def _analyze_without_side_effects(self, casualty: Casualty):
+        try:
+            evidence = self.gather_evidence(casualty)
+            scores = self.calculate_triage_scores(evidence)
+            rule_priority = self.determine_priority(scores)
+            llm_result = self.llm_analyzer.enhance_triage_reasoning(
+                evidence, scores, rule_priority.value
+            )
+            return AISuggestion(
+                timestamp=datetime.now(),
+                source="triage_engine_llm",
+                suggestion=f"Suggested triage: {llm_result['priority']} priority - {'; '.join(llm_result['reasoning'][:2])}",
+                confidence=llm_result["confidence"],
+            )
+        except Exception:
+            return None
+
+    engine.analyze_casualty = MethodType(_analyze_without_side_effects, engine)
+    scenario_ranker_module.app_state = _RankerStateProxy()
+    try:
+        ranked = rank_roster(engine, casualties)
+    except Exception:
+        return _fallback_ranking(casualties, pending_by_casualty, simulation_assets)
+    finally:
+        scenario_ranker_module.app_state = original_ranker_state
+        engine.analyze_casualty = original_analyze
+
+    rows = []
+    for index, item in enumerate(ranked, start=1):
+        casualty = casualty_map.get(str(item.get("casualty_id")))
+        if casualty is None:
+            continue
+        concern = str(item.get("reasoning", "") or "").strip()
+        concern = _strip_casualty_prefix(concern, casualty.casualty_id)
+        if not concern:
+            concern = _top_concern(casualty, pending_by_casualty, simulation_assets)
+        rows.append(
+            {
+                "rank": index,
+                "casualty_id": casualty.casualty_id,
+                "category": _category_from_ranker(item.get("priority"), casualty),
+                "confidence": float(item.get("confidence", 0.0) or 0.0),
+                "top_concern": _truncate(concern, 76),
+            }
         )
 
-    casualty_groups = []
+    if not rows:
+        return _fallback_ranking(casualties, pending_by_casualty, simulation_assets)
+    return rows
+
+
+def _map_svg(
+    casualties: list[Casualty],
+    selected_id: str | None,
+    ranked_rows: list[dict],
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> str:
+    positions = _stable_positions(casualties)
+    top_priority_id = ranked_rows[0]["casualty_id"] if ranked_rows else None
+    counts = {
+        TriageCategory.IMMEDIATE: 0,
+        TriageCategory.DELAYED: 0,
+        TriageCategory.MINIMAL: 0,
+    }
+    for casualty in casualties:
+        counts[casualty.triage_category] = counts.get(casualty.triage_category, 0) + 1
+
+    timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
+    status_text = (
+        f"{len(casualties)} CASUALTIES · "
+        f"{counts.get(TriageCategory.IMMEDIATE, 0)} IMMEDIATE · "
+        f"{counts.get(TriageCategory.DELAYED, 0)} DELAYED · "
+        f"{counts.get(TriageCategory.MINIMAL, 0)} MINIMAL · "
+        f"{len(MEDICS)} MEDICS"
+    )
+
+    assignment_lines: list[str] = []
+    casualty_groups: list[str] = []
+
     for casualty in casualties:
         x, y = positions[casualty.casualty_id]
+        medic, distance = _nearest_medic((x, y))
+        line_color = GOLD
+        line_opacity = "0.3"
+        dasharray = ""
+        if distance > UNASSIGNED_DISTANCE:
+            line_color = RED
+            line_opacity = "0.6"
+            dasharray = ' stroke-dasharray="4 4"'
+        assignment_lines.append(
+            f'<line x1="{int(medic["x"])}" y1="{int(medic["y"])}" x2="{x}" y2="{y}" '
+            f'stroke="{line_color}" stroke-width="1" opacity="{line_opacity}"{dasharray} />'
+        )
+
         label_y = y - 20
         category_style = TRIAGE_MARK_STYLES.get(casualty.triage_category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])
         pulse_ring = ""
         selected_ring = ""
+        ping_ring = ""
+        priority_reticle = ""
         if casualty.triage_category == TriageCategory.UNASSESSED:
             marker = (
                 f'<circle cx="{x}" cy="{y}" r="12" fill="none" stroke="#FAFAF6" stroke-width="4" />'
@@ -918,12 +1310,28 @@ def _map_svg(casualties: list[Casualty], selected_id: str | None) -> str:
                 f'<circle cx="{x}" cy="{y}" r="12" fill="{category_style["fill"]}" stroke="#FAFAF6" stroke-width="2" />'
             )
         if casualty.triage_category == TriageCategory.IMMEDIATE:
-            pulse_ring = (
-                f'<circle class="pulse-ring" cx="{x}" cy="{y}" r="12" fill="none" stroke="{RED}" stroke-width="1.5" />'
+            pulse_ring = f'<circle class="pulse-ring" cx="{x}" cy="{y}" r="12" fill="none" stroke="{RED}" stroke-width="1.5" />'
+
+        latest_suggestion = _latest_suggestion_time(casualty, pending_by_casualty)
+        if latest_suggestion is not None and (datetime.now(latest_suggestion.tzinfo) - latest_suggestion).total_seconds() <= 1.1:
+            ping_ring = (
+                f'<circle class="ping-ring" cx="{x}" cy="{y}" r="12" fill="none" stroke="{GOLD}" stroke-width="2" />'
             )
+
+        if casualty.casualty_id == top_priority_id:
+            priority_reticle = f"""
+            <g class="reticle-rotate priority-reticle" style="transform-origin: {x}px {y}px;">
+                <circle cx="{x}" cy="{y}" r="22" fill="none" stroke="{GOLD}" stroke-width="1.2" stroke-dasharray="6 8" />
+                <line x1="{x}" y1="{y - 28}" x2="{x}" y2="{y - 22}" stroke="{GOLD}" stroke-width="1.1" />
+                <line x1="{x + 22}" y1="{y}" x2="{x + 28}" y2="{y}" stroke="{GOLD}" stroke-width="1.1" />
+                <line x1="{x}" y1="{y + 22}" x2="{x}" y2="{y + 28}" stroke="{GOLD}" stroke-width="1.1" />
+                <line x1="{x - 28}" y1="{y}" x2="{x - 22}" y2="{y}" stroke="{GOLD}" stroke-width="1.1" />
+            </g>
+            """
+
         if casualty.casualty_id == selected_id:
             selected_ring = f"""
-            <circle class="selected-ring" cx="{x}" cy="{y}" r="18" fill="none" stroke="{GOLD}" stroke-width="2" />
+            <circle cx="{x}" cy="{y}" r="18" fill="none" stroke="{GOLD}" stroke-width="2" />
             <g class="reticle-rotate" style="transform-origin: {x}px {y}px;">
                 <circle class="selected-reticle" cx="{x}" cy="{y}" r="24" fill="none" stroke="{GOLD}" stroke-width="1.3" stroke-dasharray="5 7" />
                 <line x1="{x}" y1="{y - 30}" x2="{x}" y2="{y - 24}" stroke="{GOLD}" stroke-width="1.2" />
@@ -938,210 +1346,345 @@ def _map_svg(casualties: list[Casualty], selected_id: str | None) -> str:
             <g class="map-contact casualty-group">
                 <a class="map-link" href="{_selection_link(casualty.casualty_id)}" target="_self">
                     <circle class="hover-glow" cx="{x}" cy="{y}" r="20" fill="{GOLD}" />
+                    {priority_reticle}
                     {pulse_ring}
+                    {ping_ring}
                     {selected_ring}
                     {marker}
                     <text class="map-label" x="{x}" y="{label_y}" text-anchor="middle">{html.escape(casualty.casualty_id)} · {html.escape(triage_label(casualty.triage_category))}</text>
                 </a>
-                {_tooltip_html(casualty, x, y)}
+                {_tooltip_html(casualty, x, y, pending_by_casualty, simulation_assets)}
+            </g>
+            """
+        )
+
+    medic_groups = []
+    for medic in MEDICS:
+        selected_ring = ""
+        if selected_id == medic["id"]:
+            selected_ring = (
+                f'<circle cx="{medic["x"]}" cy="{medic["y"]}" r="20" fill="none" stroke="{GOLD}" stroke-width="1.8" />'
+            )
+        medic_groups.append(
+            f"""
+            <g class="map-contact medic-group medic-patrol {medic["css"]}">
+                <a class="map-link" href="{_selection_link(str(medic["id"]))}" target="_self">
+                    <circle cx="{medic["x"]}" cy="{medic["y"]}" r="{MEDIC_COVERAGE_RADIUS}" fill="none" stroke="{GOLD}" stroke-width="1.2" opacity="0.15" stroke-dasharray="2 4" />
+                    <circle class="hover-glow" cx="{medic["x"]}" cy="{medic["y"]}" r="22" fill="{GOLD}" />
+                    {selected_ring}
+                    <rect x="{int(medic["x"]) - 8}" y="{int(medic["y"]) - 8}" width="16" height="16" rx="1.5" fill="{GOLD}" transform="rotate(45 {medic["x"]} {medic["y"]})" />
+                    <text class="medic-label" x="{medic["x"]}" y="{int(medic["y"]) + 28}" text-anchor="middle">{html.escape(str(medic["label"]))}</text>
+                </a>
             </g>
             """
         )
 
     svg_markup = f"""
     <svg viewBox="0 0 {MAP_WIDTH} {MAP_HEIGHT}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AEGIS tactical map">
+        {_terrain_pattern()}
         <rect x="0" y="0" width="{MAP_WIDTH}" height="{MAP_HEIGHT}" fill="{BACKGROUND}" />
-        <a href="?selected=__clear__" target="_self">
+        <rect x="0" y="0" width="{MAP_WIDTH}" height="{MAP_HEIGHT}" fill="url(#terrainPattern)" />
+        <a href="{_clear_selection_link()}" target="_self">
             <rect x="0" y="0" width="{MAP_WIDTH}" height="{MAP_HEIGHT}" fill="transparent" />
         </a>
         <g class="map-grid">
             {_grid_lines(50, "#E8E4D8", 1)}
             {_grid_lines(250, "#D8D4C8", 1.5)}
         </g>
+        <rect x="{COMPOUND_LEFT}" y="{COMPOUND_TOP}" width="{COMPOUND_RIGHT - COMPOUND_LEFT}" height="{COMPOUND_BOTTOM - COMPOUND_TOP}" fill="none" stroke="{GOLD}" stroke-width="1.5" stroke-dasharray="8 4" opacity="0.35" />
+        <text class="map-grid-label" x="{COMPOUND_LEFT + 14}" y="{COMPOUND_TOP + 18}">STRUCTURE · PARTIAL COLLAPSE</text>
+        <text class="quadrant-label" x="250" y="150" text-anchor="middle">A1</text>
+        <text class="quadrant-label" x="750" y="150" text-anchor="middle">A2</text>
+        <text class="quadrant-label" x="250" y="450" text-anchor="middle">B1</text>
+        <text class="quadrant-label" x="750" y="450" text-anchor="middle">B2</text>
         <g class="map-corners">{_corner_markers()}</g>
-        <text class="map-grid-label" x="24" y="26">GRID 38TKL 042 119</text>
+        <text class="map-grid-label" x="24" y="26">GRID 38TKL 042 119 · STYLIZED OVERHEAD</text>
         <text class="map-status" x="976" y="26" text-anchor="end">{html.escape(status_text)}</text>
-        {selected_line}
-        <g class="map-contact medic-group">
-            <a class="map-link" href="{_selection_link('MEDIC')}" target="_self">
-                <circle class="hover-glow" cx="{MEDIC_X}" cy="{MEDIC_Y}" r="20" fill="{GOLD}" />
-                <rect class="medic-diamond" x="{MEDIC_X - 8}" y="{MEDIC_Y - 8}" width="16" height="16" rx="1.5" fill="{GOLD}" transform="rotate(45 {MEDIC_X} {MEDIC_Y})" />
-                <text class="medic-label" x="{MEDIC_X}" y="{MEDIC_Y + 26}" text-anchor="middle">MEDIC · SGT HAYES</text>
-            </a>
-        </g>
-        <g class="map-casualties">
-            {''.join(casualty_groups)}
-        </g>
-        <text class="map-footer" x="24" y="578">STYLIZED OVERHEAD · {timestamp}</text>
+        <g class="assignment-lines">{''.join(assignment_lines)}</g>
+        <g class="medic-layer">{''.join(medic_groups)}</g>
+        <g class="map-casualties">{''.join(casualty_groups)}</g>
+        <text class="map-footer" x="24" y="578">{timestamp}</text>
         <text class="map-footer" x="976" y="578" text-anchor="end" fill="{GOLD}">AEGIS ◆</text>
     </svg>
     """
     return re.sub(r">\s+<", "><", svg_markup).strip()
 
 
-def _empty_panel() -> str:
-    return f"""
-    <section class="tactical-card detail-shell selection-empty">
-        <div>
-            <div class="detail-title small">Select a casualty</div>
-            <div class="detail-copy">Click any icon on the map to see their status.</div>
-            <div class="empty-glyph">◆</div>
-        </div>
-    </section>
-    """
-
-
-def _medic_panel() -> str:
-    return f"""
-    <section class="tactical-card detail-shell">
-        <div class="detail-section">
-            <div class="section-kicker">MEDIC · SGT HAYES</div>
-            <div class="detail-title small">Combat Medic</div>
-            <div class="detail-copy">Live perception feed on main dashboard.</div>
-            <a class="dashboard-link" href="/" target="_self">Open dashboard view</a>
-        </div>
-    </section>
-    """
-
-
-def _vision_section(casualty: Casualty) -> str:
-    vision_items = _vision_items(casualty)
-    wounds = list(casualty.wounds)
-    rows: list[str] = []
-
-    for item in vision_items:
+def _queue_html(ranked_rows: list[dict], selected_id: str | None) -> str:
+    rows = []
+    for row in ranked_rows:
+        category = row["category"]
+        style = TRIAGE_MARK_STYLES.get(category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])
+        fill = "transparent" if style["fill"] == "none" else str(style["fill"])
+        classes = ["queue-row"]
+        if row["rank"] == 1:
+            classes.append("top")
+        if row["casualty_id"] == selected_id:
+            classes.append("selected")
         rows.append(
             f"""
-            <div class="vision-row">
-                <span class="vision-dot"></span>
-                <div class="vision-copy" title="{html.escape(str(item['text']))}">{html.escape(str(item['text']))}</div>
-                <div class="vision-meta">AI · {item['confidence']}%</div>
+            <div class="{' '.join(classes)}">
+                <div class="queue-rank">{int(row["rank"]):02d}</div>
+                <div class="triage-dot" style="background:{fill};border:1.5px solid {style["stroke"]};margin-top:0.24rem;"></div>
+                <div style="flex:1 1 auto;min-width:0;">
+                    <div class="queue-id">{html.escape(str(row["casualty_id"]))}</div>
+                    <div class="queue-concern">{html.escape(str(row["top_concern"]))}</div>
+                </div>
+                <a class="queue-select" href="{_selection_link(str(row["casualty_id"]))}" target="_self">SELECT</a>
             </div>
             """
         )
 
-    wound_rows = []
-    if wounds:
-        bleeding_count = sum(1 for wound in wounds if bool(getattr(wound, "active_bleeding", False)))
-        wound_rows.append(
-            f'<div class="vision-summary">{len(wounds)} wounds detected · {bleeding_count} bleeding</div>'
-        )
-        for wound in wounds[:3]:
-            wound_rows.append(
-                f"""
-                <div class="wound-row">
-                    <div class="wound-copy">{html.escape(_pretty_text(getattr(wound, 'location', 'unknown')))} · {html.escape(_pretty_text(getattr(wound, 'severity', 'unknown')))}</div>
-                    <div class="wound-meta">{float(getattr(wound, 'area_cm2', 0.0) or 0.0):.1f} cm²</div>
-                </div>
-                """
-            )
+    if not rows:
+        rows.append('<div class="detail-copy">No casualties in the live roster.</div>')
 
-    if not rows and not wounds:
-        rows.append('<div class="muted-copy">No vision data yet</div>')
-
-    return f"""
-    <div class="detail-section">
-        <div class="section-kicker">VISION</div>
-        {''.join(rows)}
-        {''.join(wound_rows)}
-    </div>
-    """
-
-
-def _audio_section() -> str:
-    return """
-    <div class="detail-section audio-stub">
-        <div class="section-kicker">AUDIO</div>
-        <div class="audio-slot waveform"><span class="audio-slot-label">WAVEFORM</span></div>
-        <div class="audio-slot compact"><span class="audio-slot-label">RESP STATUS · awaiting pipeline</span></div>
-        <div class="audio-slot compact"><span class="audio-slot-label">TRANSCRIPT · —</span></div>
-        <div class="audio-awaiting">AWAITING NEAL</div>
-    </div>
-    """
-
-
-def _interventions_section(casualty: Casualty) -> str:
-    intervention_rows = []
-    if casualty.interventions:
-        for intervention in casualty.interventions:
-            intervention_rows.append(
-                f"""
-                <div class="intervention-row">
-                    <div class="intervention-copy">{html.escape(_pretty_text(getattr(intervention, 'type', 'unknown')))} · {html.escape(_pretty_text(getattr(intervention, 'location', 'unknown')))}</div>
-                    <div class="intervention-meta">{_format_timestamp(getattr(intervention, 'timestamp', None))}</div>
-                </div>
-                """
-            )
-    else:
-        intervention_rows.append('<div class="muted-copy">None logged</div>')
-
-    live_color, live_label = _triage_status(casualty)
-    march_total = sum(1 for value in casualty.march_checklist.values() if bool(value))
-    notes = (
-        f'<div class="note-copy">{html.escape(casualty.medic_notes)}</div>'
-        if casualty.medic_notes
-        else ""
+    return _compact_markup(
+        f"""
+        <div>
+            <div class="queue-title">PRIORITY</div>
+            <div class="queue-subtitle" style="margin-top:0.35rem;margin-bottom:0.8rem;">LIVE RANKING</div>
+            {''.join(rows)}
+        </div>
+        """
     )
-    return f"""
-    <div class="detail-section">
-        <div class="section-kicker">INTERVENTIONS</div>
-        {''.join(intervention_rows)}
+
+
+def _empty_detail_panel() -> None:
+    st.markdown(
+        """
+        <div class="detail-title small">Click a casualty on the map</div>
+        <div class="detail-copy" style="margin-top:0.7rem;">
+            Use the tactical plot or the queue to inspect one patient or a medic zone.
+        </div>
+        <div class="empty-panel" style="margin-top:1rem;">Selection idle</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _vision_section_html(casualty: Casualty, vision_rows: list[SuggestionView]) -> str:
+    rows = []
+    for item in vision_rows:
+        rows.append(
+            f"""
+            <div class="vision-row">
+                <div style="flex:1 1 auto;min-width:0;">{html.escape(_strip_casualty_prefix(item.text, casualty.casualty_id))}</div>
+                <div class="vision-meta">AI · {_format_percent(item.confidence)}%</div>
+            </div>
+            """
+        )
+
+    if casualty.wounds:
+        rows.append(f'<div class="info-row"><div>{html.escape(_wound_summary(casualty))}</div></div>')
+
+    if not rows:
+        rows.append('<div class="detail-copy">No vision data yet</div>')
+    return _compact_markup("".join(rows))
+
+
+def _interventions_html(casualty: Casualty) -> str:
+    if not casualty.interventions:
+        return '<div class="detail-copy">None logged</div>'
+    rows = []
+    for intervention in casualty.interventions:
+        rows.append(
+            f"""
+            <div class="intervention-row">
+                <div>{html.escape(_pretty_text(getattr(intervention, "type", "unknown")))} · {html.escape(_pretty_text(getattr(intervention, "location", "unknown")))}</div>
+                <div class="intervention-meta">{_format_timestamp(getattr(intervention, "timestamp", None))}</div>
+            </div>
+            """
+        )
+    return _compact_markup("".join(rows))
+
+
+def _render_medic_panel(
+    selected_id: str,
+    casualties: list[Casualty],
+    positions: dict[str, tuple[int, int]],
+    ranked_rows: list[dict],
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> None:
+    medic = next((item for item in MEDICS if item["id"] == selected_id), MEDICS[0])
+    st.markdown(
+        f"""
+        <div class="detail-kicker">{html.escape(str(medic["label"]))}</div>
+        <div class="detail-title small">Medic POV</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    frame = app_state.get_latest_frame()
+    if frame is not None:
+        st.image(frame, width="stretch")
+    else:
+        st.markdown('<div class="placeholder-box">No live frame in shared state yet.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="detail-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-kicker">ZONE ROSTER</div>', unsafe_allow_html=True)
+
+    zone_rows = []
+    medic_position = (int(medic["x"]), int(medic["y"]))
+    ranked_lookup = {row["casualty_id"]: row for row in ranked_rows}
+    zone_ranked_rows = []
+
+    for casualty in casualties:
+        position = positions[casualty.casualty_id]
+        if _distance(position, medic_position) <= MEDIC_ZONE_RADIUS:
+            zone_ranked_rows.append(ranked_lookup.get(casualty.casualty_id, {"rank": 999, "casualty_id": casualty.casualty_id}))
+            concern = _top_concern(casualty, pending_by_casualty, simulation_assets)
+            zone_rows.append(
+                f"""
+                <div class="zone-row">
+                    {_triage_dot_html(casualty.triage_category)}
+                    <div style="flex:1 1 auto;min-width:0;">
+                        <div class="queue-id" style="font-size:0.95rem;">{html.escape(casualty.casualty_id)}</div>
+                        <div class="queue-concern">{html.escape(concern)}</div>
+                    </div>
+                    <a class="zone-select" href="{_selection_link(casualty.casualty_id)}" target="_self">SELECT</a>
+                </div>
+                """
+            )
+
+    if zone_rows:
+        st.markdown(_compact_markup("".join(zone_rows)), unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="detail-copy">No casualties currently inside this medic\'s zone.</div>', unsafe_allow_html=True)
+
+    zone_ranked_rows = [row for row in zone_ranked_rows if row]
+    zone_ranked_rows.sort(key=lambda row: int(row.get("rank", 999)))
+    current_patient = zone_ranked_rows[0]["casualty_id"] if zone_ranked_rows else "None"
+
+    st.markdown('<div class="detail-divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="mono-line">Current patient · {html.escape(str(current_patient))}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_casualty_panel(
+    casualty: Casualty,
+    rank_lookup: dict[str, int],
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> None:
+    rank_display = rank_lookup.get(casualty.casualty_id)
+    vision_rows = _casualty_suggestions(casualty, pending_by_casualty, source="vision")
+    audio_rows = _casualty_suggestions(casualty, pending_by_casualty, source="audio")
+    audio_path = _simulation_asset(casualty.casualty_id, simulation_assets, "audio")
+    image_path = _simulation_asset(casualty.casualty_id, simulation_assets, "image")
+    diagnosis = _diagnosis_text(casualty.casualty_id, simulation_assets)
+
+    st.markdown(
+        f"""
+        <div class="detail-title">Casualty {html.escape(casualty.casualty_id)}</div>
+        <div class="identity-line">{_triage_dot_html(casualty.triage_category)}{html.escape(triage_label(casualty.triage_category))}</div>
+        <div class="mono-line">LAST SEEN · {_format_timestamp(casualty.last_seen)}</div>
+        <div class="detail-rank">Priority Rank · #{rank_display if rank_display is not None else "-"}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="detail-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-kicker">VISION</div>', unsafe_allow_html=True)
+    if image_path is not None and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+        st.image(str(image_path), width="stretch")
+    st.markdown(_vision_section_html(casualty, vision_rows), unsafe_allow_html=True)
+
+    st.markdown('<div class="detail-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-kicker">AUDIO</div>', unsafe_allow_html=True)
+    if audio_path is not None:
+        st.audio(str(audio_path), width="stretch")
+        st.markdown(f'<div class="clip-meta">CLIP · {html.escape(audio_path.name)}</div>', unsafe_allow_html=True)
+        if audio_rows:
+            top_audio = audio_rows[0]
+            st.markdown(
+                f"""
+                <div class="info-row">
+                    <div>{html.escape(_strip_casualty_prefix(top_audio.text, casualty.casualty_id))}</div>
+                    <div class="info-meta">AI · {_format_percent(top_audio.confidence)}%</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            '<div class="hint-copy" style="margin-top:0.55rem;">Breathing classification awaiting Neal&apos;s classifier - CLAP integration next.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="audio-stub">
+                <div class="audio-slot waveform"><span class="stub-label">WAVEFORM</span></div>
+                <div class="audio-slot compact"><span class="stub-label">RESP STATUS · awaiting pipeline</span></div>
+                <div class="audio-slot compact"><span class="stub-label">TRANSCRIPT · -</span></div>
+                <div class="audio-awaiting">AWAITING NEAL</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="detail-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="detail-kicker">DIAGNOSIS</div>', unsafe_allow_html=True)
+    if diagnosis:
+        st.markdown(f'<div class="italic-diagnosis">{html.escape(diagnosis)}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="detail-copy">No simulation diagnosis attached.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="detail-kicker" style="margin-top:1rem;">INTERVENTIONS</div>', unsafe_allow_html=True)
+    st.markdown(_interventions_html(casualty), unsafe_allow_html=True)
+
+    live_color = TEXT_PRIMARY if casualty.triage_category == TriageCategory.DECEASED else GREEN
+    live_label = "DECEASED" if casualty.triage_category == TriageCategory.DECEASED else "ALIVE"
+    march_total = sum(1 for value in casualty.march_checklist.values() if bool(value))
+    st.markdown(
+        f"""
         <div class="status-bar">
-            <div class="status-pill"><span class="status-dot" style="background:{live_color};"></span>{html.escape(live_label)}</div>
+            <div class="status-pill"><span class="triage-dot" style="background:{live_color};border:1px solid {live_color};"></span>{html.escape(live_label)}</div>
             <div class="march-meta">MARCH · {march_total}/5</div>
         </div>
-        {notes}
-    </div>
-    """
+        """,
+        unsafe_allow_html=True,
+    )
+    if casualty.medic_notes:
+        st.markdown(f'<div class="note-copy">{html.escape(casualty.medic_notes)}</div>', unsafe_allow_html=True)
+
+    try:
+        rationale = get_priority_with_reasoning(casualty)
+    except Exception:
+        rationale = None
+    if rationale and rationale.get("reasoning"):
+        st.markdown('<div class="detail-kicker" style="margin-top:1rem;">RATIONALE</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="rationale-copy">{html.escape(str(rationale["reasoning"]))}</div>',
+            unsafe_allow_html=True,
+        )
 
 
-def _casualty_panel(casualty: Casualty) -> str:
-    triage_text = triage_label(casualty.triage_category)
-    triage_color = TRIAGE_MARK_STYLES.get(casualty.triage_category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])[
-        "fill"
-    ]
-    if casualty.triage_category == TriageCategory.UNASSESSED:
-        triage_color = GRAY
-
-    return f"""
-    <section class="tactical-card detail-shell">
-        <div class="detail-section">
-            <div class="detail-title">Casualty {html.escape(casualty.casualty_id)}</div>
-            <div class="identity-line">
-                <span class="status-dot" style="background:{triage_color};"></span>
-                {html.escape(triage_text)}
-            </div>
-            <div class="mono-line">LAST SEEN · {_format_timestamp(casualty.last_seen)}</div>
-        </div>
-        {_vision_section(casualty)}
-        {_audio_section()}
-        {_interventions_section(casualty)}
-    </section>
-    """
-
-
-def _detail_panel(selected_id: str | None, casualties: dict[str, Casualty]) -> str:
-    if not selected_id:
-        return _empty_panel()
-    if selected_id == "MEDIC":
-        return _medic_panel()
-    casualty = casualties.get(selected_id)
-    if casualty is None:
-        return _empty_panel()
-    return _casualty_panel(casualty)
-
-
-def _page_html(casualties: list[Casualty], selected_id: str | None) -> str:
+def _render_detail_panel(
+    selected_id: str | None,
+    casualties: list[Casualty],
+    ranked_rows: list[dict],
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> None:
+    positions = _stable_positions(casualties)
     casualty_map = {casualty.casualty_id: casualty for casualty in casualties}
-    page_markup = f"""
-    <div class="tactical-layout">
-        <section class="tactical-card map-shell">
-            {_map_svg(casualties, selected_id)}
-        </section>
-        {_detail_panel(selected_id, casualty_map)}
-    </div>
-    """
-    return re.sub(r">\s+<", "><", page_markup).strip()
+    rank_lookup = {row["casualty_id"]: int(row["rank"]) for row in ranked_rows}
+
+    with st.container(border=True):
+        if not selected_id:
+            _empty_detail_panel()
+            return
+        if selected_id in {medic["id"] for medic in MEDICS}:
+            _render_medic_panel(selected_id, casualties, positions, ranked_rows, pending_by_casualty, simulation_assets)
+            return
+        casualty = casualty_map.get(selected_id)
+        if casualty is None:
+            _empty_detail_panel()
+            return
+        _render_casualty_panel(casualty, rank_lookup, pending_by_casualty, simulation_assets)
 
 
 st.set_page_config(page_title="AEGIS Tactical Map", layout="wide")
@@ -1155,8 +1698,27 @@ with st.sidebar:
 @st.fragment(run_every=0.5)
 def render_tactical_map() -> None:
     casualties = app_state.get_roster()
-    selected_id = _sync_selection({casualty.casualty_id for casualty in casualties})
-    st.markdown(_page_html(casualties, selected_id), unsafe_allow_html=True)
+    pending_by_casualty = _pending_suggestions_map()
+    simulation_assets = get_simulation_assets()
+    medic_ids = {medic["id"] for medic in MEDICS}
+    selected_id = _sync_selection({casualty.casualty_id for casualty in casualties}, medic_ids)
+    ranked_rows = _ranked_roster(casualties, pending_by_casualty, simulation_assets)
+
+    map_col, detail_col, queue_col = st.columns([5, 3, 2], gap="large")
+
+    with map_col:
+        with st.container(border=True):
+            st.markdown(
+                f'<div class="map-card">{_map_svg(casualties, selected_id, ranked_rows, pending_by_casualty, simulation_assets)}</div>',
+                unsafe_allow_html=True,
+            )
+
+    with detail_col:
+        _render_detail_panel(selected_id, casualties, ranked_rows, pending_by_casualty, simulation_assets)
+
+    with queue_col:
+        with st.container(border=True):
+            st.markdown(_queue_html(ranked_rows, selected_id), unsafe_allow_html=True)
 
 
 render_tactical_map()

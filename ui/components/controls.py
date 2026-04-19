@@ -13,6 +13,7 @@ from shared.state import app_state
 from scripts.seed_fake_data import seed
 from ui.components.demo_player import DemoPlayer, DemoPlayerError
 from ui.components.live_vision_player import DEFAULT_HERO_VIDEO, LiveVisionPlayer, LiveVisionPlayerError
+from ui.components.simulation_seeder import clear_simulation_assets, get_simulation_assets, seed_simulation
 from ui.theme import hud_label
 
 DEMO_SCENARIOS = {
@@ -25,6 +26,10 @@ DEMO_SCENARIOS = {
     "Live Vision": {
         "video_path": DEFAULT_HERO_VIDEO,
         "duration": None,
+    },
+    "Simulation (mixed)": {
+        "duration": None,
+        "static": True,
     },
 }
 
@@ -119,7 +124,13 @@ def controls() -> None:
         unsafe_allow_html=True,
     )
 
-    previous_mode = st.session_state.setdefault("_demo_mode_selection", "Off")
+    inferred_simulation = bool(get_simulation_assets())
+    if "_demo_mode_selection" not in st.session_state:
+        st.session_state["_demo_mode_selection"] = "Simulation (mixed)" if inferred_simulation else "Off"
+    if "_scenario_state" not in st.session_state:
+        st.session_state["_scenario_state"] = "simulation" if inferred_simulation else "bootstrap"
+
+    previous_mode = st.session_state["_demo_mode_selection"]
     mode_names = list(DEMO_SCENARIOS.keys())
     mode_index = mode_names.index(previous_mode) if previous_mode in mode_names else 0
     demo_mode = st.selectbox("Scenario", mode_names, index=mode_index)
@@ -127,6 +138,12 @@ def controls() -> None:
         st.session_state["_demo_mode_selection"] = demo_mode
         st.session_state.pop("demo_error", None)
         app_state.audit("ui", "set_demo_mode", {"mode": demo_mode})
+        if st.session_state.get("_scenario_state") == "simulation":
+            app_state._reset_for_tests()
+            clear_simulation_assets()
+            st.session_state["_scenario_state"] = "off"
+            st.session_state["selected_id"] = None
+            st.query_params.clear()
         if demo_mode == "Off":
             _stop_demo_player()
         elif _get_demo_player() is not None:
@@ -142,6 +159,14 @@ def controls() -> None:
             st.session_state.pop("demo_error", None)
             if demo_mode == "Off":
                 st.session_state["demo_error"] = "Select a scripted demo before clicking Play."
+            elif demo_mode == "Simulation (mixed)":
+                _stop_demo_player()
+                app_state._reset_for_tests()
+                seed()
+                seed_simulation(include_existing=True)
+                st.session_state["_scenario_state"] = "simulation"
+                st.session_state["selected_id"] = None
+                st.query_params.clear()
             elif player is None:
                 scenario = DEMO_SCENARIOS[demo_mode]
                 try:
@@ -150,9 +175,11 @@ def controls() -> None:
                             video_path=scenario["video_path"],
                             script_path=scenario["script_path"],
                         )
+                        st.session_state["_scenario_state"] = "scripted"
                     elif demo_mode == "Live Vision":
                         app_state._reset_for_tests()
                         player = LiveVisionPlayer(video_path=scenario["video_path"])
+                        st.session_state["_scenario_state"] = "live_vision"
                     else:
                         raise DemoPlayerError(f"Unsupported demo mode: {demo_mode}")
                     st.session_state["demo_player"] = player
@@ -173,9 +200,18 @@ def controls() -> None:
             st.rerun()
 
     with stop_col:
-        stop_disabled = player is None
+        stop_disabled = player is None and st.session_state.get("_scenario_state") != "simulation"
         if st.button("Stop", width="stretch", disabled=stop_disabled):
-            _stop_demo_player()
+            if st.session_state.get("_scenario_state") == "simulation":
+                _stop_demo_player()
+                app_state._reset_for_tests()
+                clear_simulation_assets()
+                st.session_state["_demo_mode_selection"] = "Off"
+                st.session_state["_scenario_state"] = "off"
+                st.session_state["selected_id"] = None
+                st.query_params.clear()
+            else:
+                _stop_demo_player()
             st.rerun()
 
     st.markdown(
@@ -187,9 +223,19 @@ def controls() -> None:
         st.error(st.session_state["demo_error"])
 
     if st.button("Reset scenario", type="secondary", width="stretch"):
-        _stop_demo_player()
-        app_state._reset_for_tests()
-        seed()
+        if demo_mode == "Simulation (mixed)" or st.session_state.get("_scenario_state") == "simulation":
+            _stop_demo_player()
+            app_state._reset_for_tests()
+            clear_simulation_assets()
+            st.session_state["_demo_mode_selection"] = "Off"
+            st.session_state["_scenario_state"] = "off"
+            st.session_state["selected_id"] = None
+            st.query_params.clear()
+        else:
+            _stop_demo_player()
+            app_state._reset_for_tests()
+            seed()
+            st.session_state["_scenario_state"] = "baseline"
         st.rerun()
 
     st.markdown(f'<div class="sidebar-meta">{hud_label("Refresh cadence · 500ms")}</div>', unsafe_allow_html=True)
