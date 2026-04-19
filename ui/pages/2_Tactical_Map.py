@@ -24,7 +24,7 @@ from shared.state import app_state
 from scripts.seed_fake_data import seed
 from triage_engine import start_triage_engine
 from ui.components.controls import controls
-from ui.components.demo_catalog import get_medic_pov_clip, sample_curated_frame
+from ui.components.demo_catalog import get_casualty_audio_cue, get_medic_pov_clip, sample_curated_frame
 from ui.components.sidebar_toggle import render_sidebar_toggle_bridge
 from ui.components.simulation_seeder import get_simulation_assets, resolve_sim_asset
 from ui.theme import (
@@ -1296,11 +1296,16 @@ def _reasoning_text(casualty_id: str, simulation_assets: dict[str, dict]) -> str
     return str(reasoning).strip()
 
 
-def _audio_asset(casualty_id: str, simulation_assets: dict[str, dict]) -> Path | None:
-    audio_path = _simulation_asset(casualty_id, simulation_assets, "audio")
-    if audio_path is None:
-        return None
-    return audio_path if audio_path.suffix.lower() in AUDIO_EXTENSIONS else None
+def _audio_asset_info(casualty: Casualty, simulation_assets: dict[str, dict]) -> tuple[Path | None, str]:
+    audio_path = _simulation_asset(casualty.casualty_id, simulation_assets, "audio")
+    if audio_path is not None and audio_path.suffix.lower() in AUDIO_EXTENSIONS:
+        return audio_path, "Simulation casualty clip"
+
+    curated_cue = get_casualty_audio_cue(casualty.casualty_id)
+    if curated_cue is not None:
+        return curated_cue.audio_path, curated_cue.label
+
+    return None, ""
 
 
 def _queue_patient_label(casualty_id: str) -> str:
@@ -1378,7 +1383,7 @@ def _tooltip_html(
     concern = _wound_summary(casualty) if casualty.wounds else _diagnosis_text(casualty.casualty_id, simulation_assets)
     concern = _truncate(concern or "Awaiting assessment", 80)
     confidence = _top_confidence(casualty, pending_by_casualty)
-    audio_path = _simulation_asset(casualty.casualty_id, simulation_assets, "audio")
+    audio_path, _ = _audio_asset_info(casualty, simulation_assets)
     triage = triage_label(casualty.triage_category)
     tooltip_title = html.escape(casualty.casualty_id)
     audio_badge = '<div class="tooltip-audio">🎧 CLIP AVAILABLE</div>' if audio_path else ""
@@ -1870,7 +1875,7 @@ def _render_casualty_panel(
     rank_display = rank_lookup.get(casualty.casualty_id)
     vision_rows = _casualty_suggestions(casualty, pending_by_casualty, source="vision")
     audio_rows = _casualty_suggestions(casualty, pending_by_casualty, source="audio")
-    audio_path = _audio_asset(casualty.casualty_id, simulation_assets)
+    audio_path, audio_label = _audio_asset_info(casualty, simulation_assets)
     image_path = _simulation_asset(casualty.casualty_id, simulation_assets, "image")
     diagnosis = _diagnosis_text(casualty.casualty_id, simulation_assets)
     reasoning = _reasoning_text(casualty.casualty_id, simulation_assets)
@@ -1895,7 +1900,8 @@ def _render_casualty_panel(
     st.markdown('<div class="detail-kicker">AUDIO</div>', unsafe_allow_html=True)
     if audio_path is not None:
         st.audio(str(audio_path), width="stretch")
-        st.markdown(f'<div class="clip-meta">CLIP · {html.escape(audio_path.name)}</div>', unsafe_allow_html=True)
+        clip_meta = f"CLIP · {audio_label} · {audio_path.name}" if audio_label else f"CLIP · {audio_path.name}"
+        st.markdown(f'<div class="clip-meta">{html.escape(clip_meta)}</div>', unsafe_allow_html=True)
         if audio_rows:
             top_audio = audio_rows[0]
             st.markdown(
@@ -1903,6 +1909,17 @@ def _render_casualty_panel(
                 <div class="info-row">
                     <div>{html.escape(_strip_casualty_prefix(top_audio.text, casualty.casualty_id))}</div>
                     <div class="info-meta">AI · {_format_percent(top_audio.confidence)}%</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            respiratory_label = casualty.respiratory_status.value.replace("_", " ").title()
+            st.markdown(
+                f"""
+                <div class="info-row">
+                    <div>Respiratory cue staged for review.</div>
+                    <div class="info-meta">{html.escape(respiratory_label)}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,

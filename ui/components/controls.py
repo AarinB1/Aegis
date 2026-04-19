@@ -111,7 +111,7 @@ def controls() -> None:
         <div class="sidebar-section">
             <div class="card-kicker">{hud_label("Demo Mode")}</div>
             <div class="sidebar-meta">
-                Scripted MASCAL now runs the locked primary hero clip. Backup and optional recognition clips are staged behind the scenes for medic POVs without expanding the judge-facing menu.
+                Switch between the primary outdoor casualty clip and the indoor treatment backup while keeping the same scripted demo flow and shared state.
             </div>
         </div>
         """,
