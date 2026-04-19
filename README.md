@@ -14,10 +14,11 @@ handoff.
 
 ## The Problem
 
-In a MASCAL event, the bottleneck is not medical knowledge. Medics already know
+Up to 24% of battlefield deaths are potentially survivable with faster
+prehospital care. The bottleneck is not medical knowledge. Medics already know
 what to do. The bottleneck is **perception at scale**: seeing every wound,
 hearing every airway, tracking every casualty, and prioritizing attention fast
-enough under stress, noise, smoke, and time pressure.
+enough under stress, smoke, darkness, and noise.
 
 AEGIS is built to reduce that overload without taking decision authority away
 from the medic.
@@ -32,6 +33,8 @@ from the medic.
   intervention logging
 - **Triage support**: uses SALT/TCCC-aligned logic to rank casualties and
   surface the next medic action
+- **Clinical reasoning**: supports triage suggestions with local
+  medic-readable rationale
 - **Shared state**: keeps dashboard, tactical map, queue, and medic POV views
   synchronized through one local application state
 - **Offline operation**: runs locally with no cloud dependency
@@ -104,7 +107,8 @@ Main runtime components in this repo:
 | Tracking | ByteTrack |
 | Audio | CLAP-based respiratory classification assets and demo cues |
 | Voice | Whisper-oriented command flow |
-| Triage | local Python engine aligned to SALT / TCCC |
+| Triage | Local Python engine aligned to SALT / TCCC |
+| Clinical reasoning | Meta Llama 3.2 (local) |
 | UI | Streamlit |
 | Landing page | Next.js 14 + TypeScript + Tailwind |
 | Edge target | Jetson Orin NX / offline laptop fallback |
@@ -159,11 +163,35 @@ python scripts/run_wound_detection.py assets/test_wound.jpg --pixels-per-cm 12
 python scripts/run_wound_detection_video.py assets/test_wound_video.avi --pixels-per-cm 12 --frame-stride 3
 ```
 
+Run the curated multi-casualty judge scenarios:
+
+```bash
+python scripts/run_judge_demo.py hero --allow-builtin-yolo --skip-reel
+python scripts/run_judge_demo.py indoor --allow-builtin-yolo --skip-reel
+python scripts/run_judge_demo.py torso --allow-builtin-yolo --skip-reel
+python scenario_ranker.py outputs/judge_demo/*/*_video_wounds.json
+```
+
 Generate synthetic demo assets:
 
 ```bash
 python scripts/generate_demo_assets.py
 ```
+
+## How the Triage Engine Works
+
+The triage engine is a two-layer system:
+
+- **Layer 1 — Rule-based SALT/TCCC scoring**
+  - deterministic, doctrine-aligned, auditable
+  - bleeding, wound location, responsiveness, and respiratory state drive the
+    canonical priority
+- **Layer 2 — Local clinical reasoning**
+  - generates medic-readable rationale behind a suggested priority
+  - does not override the rule engine’s final category
+
+The engine never auto-assigns the expectant / deceased category. That remains
+medic-only.
 
 ## Tactical Map
 
