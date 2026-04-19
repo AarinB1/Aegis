@@ -1,6 +1,7 @@
 import { LinkButton } from "./Button";
 import { Container } from "./Container";
 import { Wordmark } from "./Wordmark";
+import { dashboardUrl } from "@/lib/site";
 
 const links = [
   { label: "Features", href: "#features" },
@@ -29,11 +30,11 @@ export function NavBar() {
         </nav>
 
         <LinkButton
-          href="https://github.com/AarinB1/Aegis"
-          variant="secondary"
+          href={dashboardUrl}
+          variant="primary"
           className="hidden sm:inline-flex"
         >
-          View Repo
+          Launch Dashboard
         </LinkButton>
       </Container>
     </header>

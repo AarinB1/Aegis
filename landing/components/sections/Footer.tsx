@@ -1,42 +1,44 @@
 import { Container } from "../ui/Container";
 import { Wordmark } from "../ui/Wordmark";
-
-const columns = [
-  {
-    heading: "Project",
-    links: [
-      { label: "Features", href: "#features" },
-      { label: "Ethics", href: "#ethics" },
-      { label: "FAQ", href: "#faq" },
-    ],
-  },
-  {
-    heading: "Resources",
-    links: [
-      { label: "GitHub", href: "https://github.com/aarinb1/aegis" },
-      { label: "README", href: "https://github.com/aarinb1/aegis#readme" },
-      {
-        label: "Architecture",
-        href: "https://github.com/aarinb1/aegis/tree/main/docs",
-      },
-    ],
-  },
-  {
-    heading: "Team",
-    links: [
-      {
-        label: "About",
-        href: "https://github.com/aarinb1/aegis#team",
-      },
-      {
-        label: "Contact",
-        href: "https://github.com/aarinb1/aegis/issues",
-      },
-    ],
-  },
-];
+import { dashboardUrl, repoUrl } from "@/lib/site";
 
 export function Footer() {
+  const columns = [
+    {
+      heading: "Project",
+      links: [
+        { label: "Features", href: "#features" },
+        { label: "Ethics", href: "#ethics" },
+        { label: "FAQ", href: "#faq" },
+      ],
+    },
+    {
+      heading: "Resources",
+      links: [
+        { label: "Live Dashboard", href: dashboardUrl },
+        { label: "GitHub", href: repoUrl },
+        { label: "README", href: `${repoUrl}#readme` },
+        {
+          label: "Architecture",
+          href: `${repoUrl}/tree/main/docs`,
+        },
+      ],
+    },
+    {
+      heading: "Team",
+      links: [
+        {
+          label: "About",
+          href: `${repoUrl}#team`,
+        },
+        {
+          label: "Contact",
+          href: `${repoUrl}/issues`,
+        },
+      ],
+    },
+  ];
+
   return (
     <footer className="border-t border-hairline bg-paper py-16">
       <Container>
@@ -59,6 +61,8 @@ export function Footer() {
                     <li key={l.label}>
                       <a
                         href={l.href}
+                        target={/^https?:\/\//.test(l.href) ? "_blank" : undefined}
+                        rel={/^https?:\/\//.test(l.href) ? "noreferrer" : undefined}
                         className="text-ink transition-colors hover:text-accent"
                       >
                         {l.label}

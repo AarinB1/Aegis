@@ -2,6 +2,7 @@ import { LinkButton } from "../ui/Button";
 import { Container } from "../ui/Container";
 import { Overline } from "../ui/Overline";
 import { Reveal, RevealItem, RevealStagger } from "../ui/Reveal";
+import { dashboardUrl, repoUrl } from "@/lib/site";
 
 const pillars = [
   {
@@ -37,10 +38,13 @@ export function Hero() {
             </p>
 
             <div className="mt-9 flex flex-wrap gap-3">
-              <LinkButton href="#features">Explore the system</LinkButton>
+              <LinkButton href={dashboardUrl}>Open Live Dashboard</LinkButton>
+              <LinkButton href="#features" variant="secondary">
+                Explore the system
+              </LinkButton>
               <LinkButton
-                href="https://github.com/AarinB1/Aegis"
-                variant="secondary"
+                href={repoUrl}
+                variant="ghost"
               >
                 Open GitHub
               </LinkButton>

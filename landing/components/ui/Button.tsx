@@ -52,6 +52,8 @@ export function LinkButton({
       <a
         href={href}
         className={`${base} ${styles[variant]} ${className}`}
+        target={props.target ?? "_blank"}
+        rel={props.rel ?? "noreferrer"}
         {...props}
       >
         {children}
