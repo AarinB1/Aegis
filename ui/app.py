@@ -459,6 +459,71 @@ code, pre, kbd,
     margin-top: 0.35rem;
 }}
 
+.pending-section-label {{
+    margin-top: 1rem;
+    margin-bottom: 0.55rem;
+}}
+
+.pending-featured-card {{
+    margin-top: 0;
+    border-color: rgba(184, 130, 15, 0.28);
+    background: linear-gradient(180deg, rgba(250, 250, 246, 0.98) 0%, rgba(247, 241, 228, 0.9) 100%);
+}}
+
+.pending-upcoming-head {{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 1.1rem;
+    margin-bottom: 0.25rem;
+}}
+
+.pending-upcoming-row {{
+    margin-top: 0.65rem;
+    padding: 0.8rem 0.95rem;
+    border: 1px solid rgba(232, 228, 216, 0.92);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.44);
+}}
+
+.pending-upcoming-topline {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+}}
+
+.pending-upcoming-confidence {{
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+}}
+
+.pending-upcoming-casualty {{
+    margin-top: 0.45rem;
+    font-family: var(--font-serif);
+    font-size: 1.1rem;
+    line-height: 1.05;
+}}
+
+.pending-upcoming-summary {{
+    margin-top: 0.22rem;
+    color: var(--text-muted);
+    font-size: 0.84rem;
+    line-height: 1.5;
+}}
+
+.pending-quiet-note {{
+    margin-top: 0.95rem;
+    color: var(--text-muted);
+    font-size: 0.84rem;
+    line-height: 1.5;
+}}
+
 .voice-status {{
     display: flex;
     align-items: center;
@@ -622,6 +687,39 @@ code, pre, kbd,
     margin-top: 0.25rem;
 }}
 
+.timeline-row-compact {{
+    grid-template-columns: 92px 64px 1fr;
+    gap: 0.8rem;
+    padding: 0.55rem 0;
+}}
+
+.timeline-row-compact .timeline-time,
+.timeline-row-compact .timeline-source {{
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+}}
+
+.timeline-row-compact .timeline-action {{
+    font-size: 0.86rem;
+    line-height: 1.35;
+}}
+
+.timeline-row-compact .timeline-details {{
+    font-size: 0.74rem;
+    line-height: 1.4;
+    margin-top: 0.15rem;
+}}
+
+.history-empty {{
+    margin-top: 0.35rem;
+}}
+
+.history-empty-compact {{
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.5;
+}}
+
 .video-frame-card {{
     padding: 1rem;
 }}
@@ -723,6 +821,7 @@ code, pre, kbd,
     font-family: var(--font-sans);
     font-weight: 500;
     min-height: 2.65rem;
+    white-space: nowrap;
     transition: all 120ms ease;
 }}
 
@@ -760,6 +859,29 @@ code, pre, kbd,
 
 .stButton > button[kind="tertiary"]:hover {{
     color: var(--text-primary);
+    background: transparent;
+}}
+
+[data-testid="stExpander"] {{
+    border: 1px solid rgba(232, 228, 216, 0.95);
+    border-radius: 14px;
+    background: rgba(250, 250, 246, 0.54);
+    box-shadow: none;
+}}
+
+[data-testid="stExpander"] details {{
+    border: 0;
+}}
+
+[data-testid="stExpander"] summary {{
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}}
+
+[data-testid="stExpanderDetails"] {{
     background: transparent;
 }}
 
@@ -892,14 +1014,16 @@ def render_dashboard() -> None:
             roster()
 
     with st.container():
-        signal_col, queue_col = st.columns([1, 1], gap="large")
+        signal_col, queue_col = st.columns([0.95, 1.05], gap="large")
         with signal_col:
             voice_hud()
         with queue_col:
             pending_panel()
 
     with st.container():
-        audit_log()
+        history_count = len(app_state.get_audit_log())
+        with st.expander(f"Decision History · {history_count} entries", expanded=False):
+            audit_log(show_header=False, compact=True, limit=18)
 
 with st.sidebar:
     render_controls()

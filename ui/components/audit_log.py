@@ -17,38 +17,50 @@ def _source_label(source: str) -> str:
     return "SYSTEM"
 
 
-def audit_log() -> None:
+def _truncate(text: str, limit: int) -> str:
+    value = " ".join(str(text).split())
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 3)].rstrip() + "..."
+
+
+def audit_log(*, show_header: bool = True, compact: bool = False, limit: int = 30) -> None:
     entries = list(reversed(app_state.get_audit_log()))
-    st.markdown(
-        f"""
-        <section class="card card-minimal">
-            <div class="card-header">
-                <div>
-                    <div class="card-kicker">{hud_label("Audit Log")}</div>
-                    <div class="card-title">Decision History</div>
-                </div>
-                <div class="card-meta">{len(entries)} entries</div>
-            </div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    if not entries:
-        st.markdown('<div class="card-subtle">No audit entries yet.</div>', unsafe_allow_html=True)
-        return
-
-    for entry in entries[:30]:
-        action = entry.action.replace("_", " ")
-        details = json.dumps(entry.details, default=str, sort_keys=True)
+    if show_header:
         st.markdown(
             f"""
-            <div class="timeline-row">
+            <section class="card card-minimal">
+                <div class="card-header">
+                    <div>
+                        <div class="card-kicker">{hud_label("Audit Log")}</div>
+                        <div class="card-title">Decision History</div>
+                    </div>
+                    <div class="card-meta">{len(entries)} entries</div>
+                </div>
+            </section>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    if not entries:
+        empty_class = "history-empty history-empty-compact" if compact else "card-subtle history-empty"
+        st.markdown(f'<div class="{empty_class}">No audit entries yet.</div>', unsafe_allow_html=True)
+        return
+
+    for entry in entries[:limit]:
+        action = entry.action.replace("_", " ")
+        details = json.dumps(entry.details, default=str, sort_keys=True)
+        row_class = "timeline-row timeline-row-compact" if compact else "timeline-row"
+        action_text = _truncate(action, 64) if compact else action
+        detail_text = _truncate(details, 132) if compact else details
+        st.markdown(
+            f"""
+            <div class="{row_class}">
                 <div class="timeline-time">{html.escape(entry.timestamp.strftime('%H:%M:%S'))}</div>
                 <div class="timeline-source">{html.escape(_source_label(entry.source))}</div>
                 <div>
-                    <div class="timeline-action">{html.escape(action)}</div>
-                    <div class="timeline-details">{html.escape(details)}</div>
+                    <div class="timeline-action">{html.escape(action_text)}</div>
+                    <div class="timeline-details">{html.escape(detail_text)}</div>
                 </div>
             </div>
             """,
