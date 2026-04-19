@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 
 import streamlit as st
@@ -14,11 +15,18 @@ from ui.theme import hud_label
 DEMO_SCENARIOS = menu_demo_scenarios()
 
 PLAYER_TYPES = (DemoPlayer,)
+UI_REFRESH_SECONDS = float(os.getenv("AEGIS_UI_REFRESH_SECONDS", "2.0"))
 
 
 def _format_demo_seconds(seconds: float) -> str:
     clipped = max(0.0, seconds)
     return f"00:{clipped:04.1f}"
+
+
+def _refresh_cadence_label() -> str:
+    if UI_REFRESH_SECONDS < 1:
+        return f"{int(UI_REFRESH_SECONDS * 1000)}ms"
+    return f"{UI_REFRESH_SECONDS:.1f}s"
 
 
 def _get_demo_player() -> DemoPlayer | None:
@@ -201,4 +209,7 @@ def controls() -> None:
         st.query_params.clear()
         st.rerun()
 
-    st.markdown(f'<div class="sidebar-meta">{hud_label("Refresh cadence · 500ms")}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="sidebar-meta">{hud_label(f"Refresh cadence · {_refresh_cadence_label()}")}</div>',
+        unsafe_allow_html=True,
+    )

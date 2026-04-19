@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import html
+import os
 import math
 from pathlib import Path
 import re
@@ -66,6 +67,7 @@ CASUALTY_SELECTED_RADIUS = 24
 CASUALTY_PRIORITY_RADIUS = 30
 MEDIC_MARKER_RADIUS = 11
 MEDIC_HOVER_RADIUS = 28
+UI_REFRESH_SECONDS = float(os.getenv("AEGIS_UI_REFRESH_SECONDS", "2.0"))
 
 MEDICS = (
     {"id": "MEDIC_HAYES", "label": "MEDIC · SGT HAYES", "name": "SGT HAYES", "x": 300, "y": 355, "css": "medic-one"},
@@ -206,6 +208,16 @@ header[data-testid="stHeader"] {{
     padding-top: 3.4rem;
     padding-left: 1rem;
     padding-right: 1rem;
+}}
+
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-baseweb="select"] *,
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] * {{
+    color: var(--text-primary) !important;
+    opacity: 1 !important;
 }}
 
 .block-container {{
@@ -2095,7 +2107,7 @@ with st.sidebar:
     controls()
 
 
-@st.fragment(run_every=0.5)
+@st.fragment(run_every=UI_REFRESH_SECONDS)
 def render_tactical_map() -> None:
     casualties = app_state.get_roster()
     pending_by_casualty = _pending_suggestions_map()

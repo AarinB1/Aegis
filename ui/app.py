@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 
@@ -44,6 +45,9 @@ def _ensure_seeded() -> None:
         from scripts.seed_fake_data import seed
 
         seed()
+
+
+UI_REFRESH_SECONDS = float(os.getenv("AEGIS_UI_REFRESH_SECONDS", "2.0"))
 
 
 STYLE_BLOCK = f"""
@@ -167,6 +171,16 @@ header[data-testid="stHeader"] {{
     padding-top: 3.4rem;
     padding-left: 1rem;
     padding-right: 1rem;
+}}
+
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-baseweb="select"] *,
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] * {{
+    color: var(--text-primary) !important;
+    opacity: 1 !important;
 }}
 
 .block-container {{
@@ -1001,12 +1015,12 @@ _ensure_seeded()
 render_sidebar_toggle_bridge()
 
 
-@st.fragment(run_every=0.5)
+@st.fragment(run_every=UI_REFRESH_SECONDS)
 def render_controls() -> None:
     controls()
 
 
-@st.fragment(run_every=0.5)
+@st.fragment(run_every=UI_REFRESH_SECONDS)
 def render_dashboard() -> None:
     _hero()
 
