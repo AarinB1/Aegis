@@ -33,10 +33,17 @@ class CuratedClip:
     expected_output: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class CuratedAudioCue:
+    casualty_id: str
+    label: str
+    audio_path: Path
+
+
 CURATED_DEMO_CLIPS: dict[str, CuratedClip] = {
     "primary": CuratedClip(
         key="primary",
-        label="Scripted MASCAL (90s)",
+        label="Outdoor Face Wound Demo",
         video_path=PRIMARY_HERO_VIDEO,
         script_path=MASCAL_SCRIPT,
         duration=90.0,
@@ -51,8 +58,11 @@ CURATED_DEMO_CLIPS: dict[str, CuratedClip] = {
     ),
     "backup": CuratedClip(
         key="backup",
-        label="Backup Indoor Treatment",
+        label="Indoor Treatment Demo",
         video_path=BACKUP_RECOGNITION_VIDEO,
+        script_path=MASCAL_SCRIPT,
+        duration=90.0,
+        expose_in_menu=True,
         contract_role="backup",
     ),
     "optional_third": CuratedClip(
@@ -66,6 +76,24 @@ CURATED_DEMO_CLIPS: dict[str, CuratedClip] = {
 MEDIC_POV_CLIP_MAP: dict[str, Path] = {
     "MEDIC_HAYES": CURATED_DEMO_CLIPS["backup"].video_path,
     "MEDIC_RIOS": CURATED_DEMO_CLIPS["optional_third"].video_path,
+}
+
+CURATED_CASUALTY_AUDIO: dict[str, CuratedAudioCue] = {
+    "A1": CuratedAudioCue(
+        casualty_id="A1",
+        label="Respiratory distress sample",
+        audio_path=ROOT / "audio" / "testclip.wav",
+    ),
+    "A2": CuratedAudioCue(
+        casualty_id="A2",
+        label="Baseline breath sample",
+        audio_path=ROOT / "audio" / "normal.wav",
+    ),
+    "A3": CuratedAudioCue(
+        casualty_id="A3",
+        label="Weak / irregular breath sample",
+        audio_path=ROOT / "audio" / "testclip.wav",
+    ),
 }
 
 
@@ -88,6 +116,13 @@ def get_medic_pov_clip(medic_id: str) -> Path | None:
     if clip_path is None or not clip_path.exists():
         return None
     return clip_path
+
+
+def get_casualty_audio_cue(casualty_id: str) -> CuratedAudioCue | None:
+    cue = CURATED_CASUALTY_AUDIO.get(str(casualty_id))
+    if cue is None or not cue.audio_path.exists():
+        return None
+    return cue
 
 
 @lru_cache(maxsize=24)

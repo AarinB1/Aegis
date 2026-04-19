@@ -10,19 +10,26 @@ import numpy as np
 from ui.components.controls import DEMO_SCENARIOS
 from ui.components.demo_catalog import (
     BACKUP_RECOGNITION_VIDEO,
+    CURATED_CASUALTY_AUDIO,
     CURATED_DEMO_CLIPS,
     DEFAULT_HERO_VIDEO,
     MEDIC_POV_CLIP_MAP,
     OPTIONAL_THIRD_VIDEO,
+    get_casualty_audio_cue,
 )
 from ui.components.demo_player import DemoPlayer
 
 
 class DemoPlayerTests(unittest.TestCase):
-    def test_demo_menu_keeps_only_off_and_scripted(self) -> None:
-        self.assertEqual(list(DEMO_SCENARIOS.keys()), ["Off", "Scripted MASCAL (90s)"])
-        self.assertEqual(DEMO_SCENARIOS["Scripted MASCAL (90s)"]["video_path"], DEFAULT_HERO_VIDEO)
-        self.assertEqual(DEMO_SCENARIOS["Scripted MASCAL (90s)"]["clip_key"], "primary")
+    def test_demo_menu_exposes_two_curated_demo_clips(self) -> None:
+        self.assertEqual(
+            list(DEMO_SCENARIOS.keys()),
+            ["Off", "Outdoor Face Wound Demo", "Indoor Treatment Demo"],
+        )
+        self.assertEqual(DEMO_SCENARIOS["Outdoor Face Wound Demo"]["video_path"], DEFAULT_HERO_VIDEO)
+        self.assertEqual(DEMO_SCENARIOS["Outdoor Face Wound Demo"]["clip_key"], "primary")
+        self.assertEqual(DEMO_SCENARIOS["Indoor Treatment Demo"]["video_path"], BACKUP_RECOGNITION_VIDEO)
+        self.assertEqual(DEMO_SCENARIOS["Indoor Treatment Demo"]["clip_key"], "backup")
 
     def test_curated_catalog_matches_locked_clip_contract(self) -> None:
         self.assertGreaterEqual(len(CURATED_DEMO_CLIPS), 3)
@@ -47,6 +54,14 @@ class DemoPlayerTests(unittest.TestCase):
         self.assertTrue(all(path.exists() for path in mapped_paths))
         self.assertEqual(MEDIC_POV_CLIP_MAP["MEDIC_HAYES"], BACKUP_RECOGNITION_VIDEO)
         self.assertEqual(MEDIC_POV_CLIP_MAP["MEDIC_RIOS"], OPTIONAL_THIRD_VIDEO)
+
+    def test_curated_casualty_audio_cues_are_repo_backed(self) -> None:
+        self.assertEqual(set(CURATED_CASUALTY_AUDIO), {"A1", "A2", "A3"})
+        for casualty_id in CURATED_CASUALTY_AUDIO:
+            cue = get_casualty_audio_cue(casualty_id)
+            self.assertIsNotNone(cue)
+            self.assertTrue(cue.audio_path.exists())
+            self.assertIn(cue.audio_path.suffix.lower(), {".wav", ".mp3", ".m4a", ".ogg", ".flac"})
 
     def test_demo_player_uses_demo_profile_clip_window_and_crop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
