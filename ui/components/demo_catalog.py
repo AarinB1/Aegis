@@ -10,10 +10,15 @@ import numpy as np
 from vision.demo_profiles import get_demo_profile
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_HERO_VIDEO = ROOT / "assets" / "demo_videos" / "DOD_111088902_12_18_hero.mp4"
-INDOOR_ASSESSMENT_VIDEO = ROOT / "assets" / "demo_videos" / "DOD_100500026_best_indoor_torso_assessment_01-23_01-35.mp4"
-INDOOR_TREATMENT_VIDEO = ROOT / "assets" / "demo_videos" / "DOD_110359890_best_indoor_treatment_00-00_00-09.mp4"
+PRIMARY_HERO_VIDEO = ROOT / "assets" / "demo_videos" / "DOD_111088902_12_18_hero.mp4"
+BACKUP_RECOGNITION_VIDEO = ROOT / "assets" / "demo_videos" / "DOD_110359890_best_indoor_treatment_00-00_00-09.mp4"
+OPTIONAL_THIRD_VIDEO = ROOT / "assets" / "demo_videos" / "DOD_100500026_best_indoor_torso_assessment_01-23_01-35.mp4"
 MASCAL_SCRIPT = ROOT / "scripts" / "demo_scenarios" / "mascal_90s.json"
+
+# Backwards-compatible aliases for existing imports.
+DEFAULT_HERO_VIDEO = PRIMARY_HERO_VIDEO
+INDOOR_TREATMENT_VIDEO = BACKUP_RECOGNITION_VIDEO
+INDOOR_ASSESSMENT_VIDEO = OPTIONAL_THIRD_VIDEO
 
 
 @dataclass(frozen=True)
@@ -24,32 +29,43 @@ class CuratedClip:
     script_path: Path | None = None
     duration: float | None = None
     expose_in_menu: bool = False
+    contract_role: str = "support"
+    expected_output: tuple[str, ...] = ()
 
 
 CURATED_DEMO_CLIPS: dict[str, CuratedClip] = {
-    "hero": CuratedClip(
-        key="hero",
+    "primary": CuratedClip(
+        key="primary",
         label="Scripted MASCAL (90s)",
-        video_path=DEFAULT_HERO_VIDEO,
+        video_path=PRIMARY_HERO_VIDEO,
         script_path=MASCAL_SCRIPT,
         duration=90.0,
         expose_in_menu=True,
+        contract_role="primary",
+        expected_output=(
+            "1 casualty",
+            "1 primary face/neck bleeding wound",
+            "no giant full-body track box",
+            "no extra low-confidence roster entries",
+        ),
     ),
-    "indoor_assessment": CuratedClip(
-        key="indoor_assessment",
-        label="Indoor Torso Assessment",
-        video_path=INDOOR_ASSESSMENT_VIDEO,
+    "backup": CuratedClip(
+        key="backup",
+        label="Backup Indoor Treatment",
+        video_path=BACKUP_RECOGNITION_VIDEO,
+        contract_role="backup",
     ),
-    "indoor_treatment": CuratedClip(
-        key="indoor_treatment",
-        label="Indoor Treatment",
-        video_path=INDOOR_TREATMENT_VIDEO,
+    "optional_third": CuratedClip(
+        key="optional_third",
+        label="Optional Indoor Torso Assessment",
+        video_path=OPTIONAL_THIRD_VIDEO,
+        contract_role="optional_third",
     ),
 }
 
 MEDIC_POV_CLIP_MAP: dict[str, Path] = {
-    "MEDIC_HAYES": CURATED_DEMO_CLIPS["indoor_assessment"].video_path,
-    "MEDIC_RIOS": CURATED_DEMO_CLIPS["indoor_treatment"].video_path,
+    "MEDIC_HAYES": CURATED_DEMO_CLIPS["backup"].video_path,
+    "MEDIC_RIOS": CURATED_DEMO_CLIPS["optional_third"].video_path,
 }
 
 

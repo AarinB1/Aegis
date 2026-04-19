@@ -111,7 +111,7 @@ def controls() -> None:
         <div class="sidebar-section">
             <div class="card-kicker">{hud_label("Demo Mode")}</div>
             <div class="sidebar-meta">
-                Scripted MASCAL is the current primary judge-safe path. Additional curated clips can be added here once the final shortlist is locked.
+                Scripted MASCAL now runs the locked primary hero clip. Backup and optional recognition clips are staged behind the scenes for medic POVs without expanding the judge-facing menu.
             </div>
         </div>
         """,

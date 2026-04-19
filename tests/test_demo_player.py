@@ -8,7 +8,13 @@ import cv2
 import numpy as np
 
 from ui.components.controls import DEMO_SCENARIOS
-from ui.components.demo_catalog import CURATED_DEMO_CLIPS, DEFAULT_HERO_VIDEO, MEDIC_POV_CLIP_MAP
+from ui.components.demo_catalog import (
+    BACKUP_RECOGNITION_VIDEO,
+    CURATED_DEMO_CLIPS,
+    DEFAULT_HERO_VIDEO,
+    MEDIC_POV_CLIP_MAP,
+    OPTIONAL_THIRD_VIDEO,
+)
 from ui.components.demo_player import DemoPlayer
 
 
@@ -16,16 +22,31 @@ class DemoPlayerTests(unittest.TestCase):
     def test_demo_menu_keeps_only_off_and_scripted(self) -> None:
         self.assertEqual(list(DEMO_SCENARIOS.keys()), ["Off", "Scripted MASCAL (90s)"])
         self.assertEqual(DEMO_SCENARIOS["Scripted MASCAL (90s)"]["video_path"], DEFAULT_HERO_VIDEO)
+        self.assertEqual(DEMO_SCENARIOS["Scripted MASCAL (90s)"]["clip_key"], "primary")
 
-    def test_curated_catalog_is_ready_for_multiple_clips(self) -> None:
+    def test_curated_catalog_matches_locked_clip_contract(self) -> None:
         self.assertGreaterEqual(len(CURATED_DEMO_CLIPS), 3)
         self.assertTrue(all(clip.video_path.exists() for clip in CURATED_DEMO_CLIPS.values()))
+        self.assertEqual(CURATED_DEMO_CLIPS["primary"].video_path, DEFAULT_HERO_VIDEO)
+        self.assertEqual(CURATED_DEMO_CLIPS["backup"].video_path, BACKUP_RECOGNITION_VIDEO)
+        self.assertEqual(CURATED_DEMO_CLIPS["optional_third"].video_path, OPTIONAL_THIRD_VIDEO)
+        self.assertEqual(
+            CURATED_DEMO_CLIPS["primary"].expected_output,
+            (
+                "1 casualty",
+                "1 primary face/neck bleeding wound",
+                "no giant full-body track box",
+                "no extra low-confidence roster entries",
+            ),
+        )
 
     def test_medic_pov_clip_map_uses_distinct_existing_videos(self) -> None:
         self.assertEqual(set(MEDIC_POV_CLIP_MAP), {"MEDIC_HAYES", "MEDIC_RIOS"})
         mapped_paths = {path.resolve() for path in MEDIC_POV_CLIP_MAP.values()}
         self.assertEqual(len(mapped_paths), 2)
         self.assertTrue(all(path.exists() for path in mapped_paths))
+        self.assertEqual(MEDIC_POV_CLIP_MAP["MEDIC_HAYES"], BACKUP_RECOGNITION_VIDEO)
+        self.assertEqual(MEDIC_POV_CLIP_MAP["MEDIC_RIOS"], OPTIONAL_THIRD_VIDEO)
 
     def test_demo_player_uses_demo_profile_clip_window_and_crop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
