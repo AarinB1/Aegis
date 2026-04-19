@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 import re
 
 from schema import AISuggestion, Casualty, TriageCategory
 from shared.state import app_state
-from simulation.casualties import SimCasualty, get_casualties
+from simulation.casualties import SimCasualty, evaluate_all, get_casualties
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LOGGER = logging.getLogger(__name__)
 
 simulation_assets: dict[str, dict[str, object]] = {}
 
@@ -80,6 +82,19 @@ def _effective_casualty_id(sim: SimCasualty, occupied_ids: set[str], include_exi
     return _next_available_id(occupied_ids)
 
 
+def _normalize_reasoning(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(part).strip() for part in value if str(part).strip()]
+        return " ".join(parts) if parts else None
+    text = str(value).strip()
+    return text or None
+
+
 def seed_simulation(include_existing: bool = True) -> None:
     """
     Seeds app_state with Neal's simulation casualties. If include_existing
@@ -92,8 +107,19 @@ def seed_simulation(include_existing: bool = True) -> None:
     simulation_assets.clear()
     occupied_ids = {casualty.casualty_id for casualty in app_state.get_roster()}
     seeded_at = datetime.now(timezone.utc)
+    evaluated_by_id: dict[str, dict[str, object]] = {}
+
+    try:
+        evaluated_by_id = {
+            str(item.get("id", "") or ""): item
+            for item in evaluate_all()
+            if str(item.get("id", "") or "").strip()
+        }
+    except Exception as exc:
+        LOGGER.warning("Simulation triage reasoning unavailable; continuing without rationale: %s", exc)
 
     for sim in get_casualties():
+        source_id = str(getattr(sim, "id", "") or "")
         casualty_id = _effective_casualty_id(sim, occupied_ids, include_existing)
         occupied_ids.add(casualty_id)
 
@@ -121,13 +147,14 @@ def seed_simulation(include_existing: bool = True) -> None:
             "audio": resolve_sim_asset(str(getattr(sim, "audio", "") or "")),
             "image": resolve_sim_asset(str(getattr(sim, "image", "") or "")),
             "diagnosis": str(getattr(sim, "output_script", "") or "").strip(),
+            "reasoning": _normalize_reasoning(evaluated_by_id.get(source_id, {}).get("reasoning")),
             "location": getattr(sim, "location", None),
-            "source_id": str(getattr(sim, "id", casualty_id)),
+            "source_id": source_id or casualty_id,
         }
 
 
 def get_simulation_assets() -> dict[str, dict]:
-    """Returns {casualty_id: {audio, image, diagnosis}} for all sim casualties."""
+    """Returns {casualty_id: {audio, image, diagnosis, reasoning}} for all sim casualties."""
     return deepcopy(simulation_assets)
 
 
