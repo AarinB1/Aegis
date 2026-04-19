@@ -1,6 +1,7 @@
 services:
   - type: web
     name: aegis-dashboard
+    plan: free
     runtime: docker
     dockerfilePath: ./Dockerfile.streamlit
     dockerContext: .
