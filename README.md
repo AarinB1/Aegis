@@ -99,19 +99,21 @@ Main runtime components in this repo:
 - `landing/` — Next.js landing page
 - `simulation/` — teammate simulation casualties and supporting demo data
 
-## Tech Stack
+## Built With
 
-| Layer | Technology |
+| Category | Technologies |
 |---|---|
-| Casualty / wound vision | YOLOv8, Grounding DINO, SAM-family segmentation, DINOv2 |
-| Tracking | ByteTrack |
-| Audio | CLAP-based respiratory classification assets and demo cues |
-| Voice | Whisper-oriented command flow |
-| Triage | Local Python engine aligned to SALT / TCCC |
-| Clinical reasoning | Meta Llama 3.2 (local) |
-| UI | Streamlit |
-| Landing page | Next.js 14 + TypeScript + Tailwind |
-| Edge target | Jetson Orin NX / offline laptop fallback |
+| Languages | Python, TypeScript, JavaScript, HTML/CSS |
+| Vision / CV | OpenCV, Ultralytics YOLOv8, Segment Anything (SAM / MobileSAM), ByteTrack |
+| Audio / signal processing | Librosa, NumPy, pandas, scikit-learn, curated respiratory audio samples |
+| Triage / reasoning | Local SALT / TCCC triage engine, Meta Llama 3.2 via Ollama |
+| Dashboard UI | Streamlit |
+| Landing page | Next.js 14, React, TypeScript, Tailwind CSS, Framer Motion |
+| API / backend | FastAPI, Pydantic, Uvicorn |
+| Deployment target | Fully offline local runtime, designed for Jetson Orin NX or laptop fallback |
+
+AEGIS is built to run **fully offline** for demo and edge use. It does **not**
+depend on cloud services or an external database for the core workflow.
 
 ## Quick Start
 
