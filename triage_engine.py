@@ -344,3 +344,21 @@ def get_priority_with_reasoning(casualty: Casualty) -> dict:
         'reasoning': '; '.join(llm_result['reasoning'][:2]),
         'score': scores['total_score'],
     }
+
+
+def get_priority_and_reasoning(casualty: Casualty) -> tuple[str, str]:
+    """
+    Dead-simple API for Neal: pass a Casualty, get back exactly
+    (priority, reasoning).
+
+    Returns:
+        tuple of (priority_string, reasoning_string)
+        priority: 'red' | 'yellow' | 'green'
+        reasoning: human-readable clinical reasoning from Llama 3.2
+
+    Usage (Neal):
+        from triage_engine import get_priority_and_reasoning
+        priority, reasoning = get_priority_and_reasoning(casualty)
+    """
+    result = get_priority_with_reasoning(casualty)
+    return result['priority'], result['reasoning']
