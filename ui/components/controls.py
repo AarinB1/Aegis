@@ -1,35 +1,19 @@
 from __future__ import annotations
 
-from pathlib import Path
 import sys
 
 import streamlit as st
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from shared.state import app_state
 from scripts.seed_fake_data import seed
+from ui.components.demo_catalog import menu_demo_scenarios
 from ui.components.demo_player import DemoPlayer, DemoPlayerError
-from ui.components.live_vision_player import DEFAULT_HERO_VIDEO, LiveVisionPlayer
-from ui.components.simulation_seeder import clear_simulation_assets, get_simulation_assets, seed_simulation
+from ui.components.simulation_seeder import clear_simulation_assets, get_simulation_assets
 from ui.theme import hud_label
 
-DEMO_SCENARIOS = {
-    "Off": None,
-    "Scripted MASCAL (90s)": {
-        "video_path": DEFAULT_HERO_VIDEO,
-        "script_path": ROOT / "scripts" / "demo_scenarios" / "mascal_90s.json",
-        "duration": 90.0,
-    },
-    "Simulation (mixed)": {
-        "duration": None,
-        "static": True,
-    },
-}
+DEMO_SCENARIOS = menu_demo_scenarios()
 
-PLAYER_TYPES = (DemoPlayer, LiveVisionPlayer)
+PLAYER_TYPES = (DemoPlayer,)
 
 
 def _format_demo_seconds(seconds: float) -> str:
@@ -37,7 +21,7 @@ def _format_demo_seconds(seconds: float) -> str:
     return f"00:{clipped:04.1f}"
 
 
-def _get_demo_player() -> DemoPlayer | LiveVisionPlayer | None:
+def _get_demo_player() -> DemoPlayer | None:
     player = st.session_state.get("demo_player")
     return player if isinstance(player, PLAYER_TYPES) else None
 
@@ -53,7 +37,21 @@ def _stop_demo_player() -> None:
     _clear_demo_player()
 
 
-def _status_text(player: DemoPlayer | LiveVisionPlayer | None, selection: str) -> str:
+def _normalize_removed_simulation_state() -> None:
+    if not get_simulation_assets() and st.session_state.get("_scenario_state") != "simulation":
+        return
+
+    _stop_demo_player()
+    clear_simulation_assets()
+    app_state._reset_for_tests()
+    seed()
+    st.session_state["_demo_mode_selection"] = "Off"
+    st.session_state["_scenario_state"] = "baseline"
+    st.session_state["selected_id"] = None
+    st.query_params.clear()
+
+
+def _status_text(player: DemoPlayer | None, selection: str) -> str:
     if player is None or selection == "Off":
         return "Idle"
 
@@ -84,8 +82,8 @@ def controls() -> None:
             <span class="label">AEGIS</span>
         </div>
         <div class="sidebar-meta">
-            {hud_label("Demo controls")}<br>
-            Switch between baseline, scripted fallback, and mixed simulation while keeping the same shared casualty picture.
+            {hud_label("Curated demo controls")}<br>
+            Judge-facing controls for the strongest scripted flow now, with room to slot in a few approved demo clips later.
         </div>
         """,
         unsafe_allow_html=True,
@@ -113,33 +111,31 @@ def controls() -> None:
         <div class="sidebar-section">
             <div class="card-kicker">{hud_label("Demo Mode")}</div>
             <div class="sidebar-meta">
-                Scripted mode is the primary judge-safe demo path. Simulation mixes seeded casualties and teammate data into the same shared state.
+                Scripted MASCAL is the current primary judge-safe path. Additional curated clips can be added here once the final shortlist is locked.
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    inferred_simulation = bool(get_simulation_assets())
+    _normalize_removed_simulation_state()
+
     if "_demo_mode_selection" not in st.session_state:
-        st.session_state["_demo_mode_selection"] = "Simulation (mixed)" if inferred_simulation else "Off"
+        st.session_state["_demo_mode_selection"] = "Off"
     if "_scenario_state" not in st.session_state:
-        st.session_state["_scenario_state"] = "simulation" if inferred_simulation else "bootstrap"
+        st.session_state["_scenario_state"] = "bootstrap"
 
     previous_mode = st.session_state["_demo_mode_selection"]
     mode_names = list(DEMO_SCENARIOS.keys())
-    mode_index = mode_names.index(previous_mode) if previous_mode in mode_names else 0
+    if previous_mode not in mode_names:
+        previous_mode = "Off"
+        st.session_state["_demo_mode_selection"] = previous_mode
+    mode_index = mode_names.index(previous_mode)
     demo_mode = st.selectbox("Scenario", mode_names, index=mode_index)
     if demo_mode != previous_mode:
         st.session_state["_demo_mode_selection"] = demo_mode
         st.session_state.pop("demo_error", None)
         app_state.audit("ui", "set_demo_mode", {"mode": demo_mode})
-        if st.session_state.get("_scenario_state") == "simulation":
-            app_state._reset_for_tests()
-            clear_simulation_assets()
-            st.session_state["_scenario_state"] = "off"
-            st.session_state["selected_id"] = None
-            st.query_params.clear()
         if demo_mode == "Off":
             _stop_demo_player()
         elif _get_demo_player() is not None:
@@ -155,25 +151,14 @@ def controls() -> None:
             st.session_state.pop("demo_error", None)
             if demo_mode == "Off":
                 st.session_state["demo_error"] = "Select a scripted demo before clicking Play."
-            elif demo_mode == "Simulation (mixed)":
-                _stop_demo_player()
-                app_state._reset_for_tests()
-                seed()
-                seed_simulation(include_existing=True)
-                st.session_state["_scenario_state"] = "simulation"
-                st.session_state["selected_id"] = None
-                st.query_params.clear()
             elif player is None:
                 scenario = DEMO_SCENARIOS[demo_mode]
                 try:
-                    if demo_mode == "Scripted MASCAL (90s)":
-                        player = DemoPlayer(
-                            video_path=scenario["video_path"],
-                            script_path=scenario["script_path"],
-                        )
-                        st.session_state["_scenario_state"] = "scripted"
-                    else:
-                        raise DemoPlayerError(f"Unsupported demo mode: {demo_mode}")
+                    player = DemoPlayer(
+                        video_path=scenario["video_path"],
+                        script_path=scenario["script_path"],
+                    )
+                    st.session_state["_scenario_state"] = "scripted"
                     st.session_state["demo_player"] = player
                     player.start()
                 except DemoPlayerError as exc:
@@ -192,18 +177,10 @@ def controls() -> None:
             st.rerun()
 
     with stop_col:
-        stop_disabled = player is None and st.session_state.get("_scenario_state") != "simulation"
+        stop_disabled = player is None
         if st.button("Stop", width="stretch", disabled=stop_disabled):
-            if st.session_state.get("_scenario_state") == "simulation":
-                _stop_demo_player()
-                app_state._reset_for_tests()
-                clear_simulation_assets()
-                st.session_state["_demo_mode_selection"] = "Off"
-                st.session_state["_scenario_state"] = "off"
-                st.session_state["selected_id"] = None
-                st.query_params.clear()
-            else:
-                _stop_demo_player()
+            _stop_demo_player()
+            st.session_state["_scenario_state"] = "off"
             st.rerun()
 
     st.markdown(
@@ -215,19 +192,13 @@ def controls() -> None:
         st.error(st.session_state["demo_error"])
 
     if st.button("Reset scenario", type="secondary", width="stretch"):
-        if demo_mode == "Simulation (mixed)" or st.session_state.get("_scenario_state") == "simulation":
-            _stop_demo_player()
-            app_state._reset_for_tests()
-            clear_simulation_assets()
-            st.session_state["_demo_mode_selection"] = "Off"
-            st.session_state["_scenario_state"] = "off"
-            st.session_state["selected_id"] = None
-            st.query_params.clear()
-        else:
-            _stop_demo_player()
-            app_state._reset_for_tests()
-            seed()
-            st.session_state["_scenario_state"] = "baseline"
+        _stop_demo_player()
+        clear_simulation_assets()
+        app_state._reset_for_tests()
+        seed()
+        st.session_state["_scenario_state"] = "baseline"
+        st.session_state["selected_id"] = None
+        st.query_params.clear()
         st.rerun()
 
     st.markdown(f'<div class="sidebar-meta">{hud_label("Refresh cadence · 500ms")}</div>', unsafe_allow_html=True)

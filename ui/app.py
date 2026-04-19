@@ -12,9 +12,9 @@ import streamlit as st
 from shared.state import app_state
 from ui.components.audit_log import audit_log
 from ui.components.controls import controls
-from ui.components.medevac import medevac
 from ui.components.pending_panel import pending_panel
 from ui.components.roster import roster
+from ui.components.sidebar_toggle import render_sidebar_toggle_bridge
 from ui.components.video_pane import video_pane
 from ui.components.voice_hud import voice_hud
 from ui.theme import (
@@ -93,7 +93,61 @@ footer {{
 
 header[data-testid="stHeader"] {{
     background: transparent;
-    height: 0;
+    pointer-events: none;
+}}
+
+[data-testid="stBaseButton-headerNoPadding"] {{
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    border-radius: 999px;
+    border: 1px solid var(--border) !important;
+    box-shadow: var(--shadow);
+    background: rgba(250, 250, 246, 0.96) !important;
+}}
+
+[data-testid="stBaseButton-headerNoPadding"]:hover {{
+    background: rgba(184, 130, 15, 0.08) !important;
+}}
+
+[data-testid="collapsedControl"] {{
+    position: fixed;
+    top: 0.9rem;
+    left: 0.9rem;
+    z-index: 1001;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    background: rgba(250, 250, 246, 0.96);
+}}
+
+[data-testid="stExpandSidebarButton"] {{
+    position: fixed;
+    top: 0.9rem;
+    left: 0.9rem;
+    z-index: 1002;
+    visibility: visible !important;
+    display: inline-flex !important;
+    pointer-events: auto !important;
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 999px;
+    border: 1px solid var(--border) !important;
+    box-shadow: var(--shadow);
+    background: rgba(250, 250, 246, 0.96) !important;
+}}
+
+[data-testid="stExpandSidebarButton"]:hover {{
+    background: rgba(184, 130, 15, 0.08) !important;
+}}
+
+[data-testid="collapsedControl"] button {{
+    visibility: visible !important;
+    border-radius: 999px;
+}}
+
+[data-testid="collapsedControl"] button:hover {{
+    background: rgba(184, 130, 15, 0.08);
 }}
 
 [data-testid="stAppViewContainer"] {{
@@ -815,9 +869,10 @@ def _mission_band() -> None:
     )
 
 
-st.set_page_config(page_title="AEGIS Tactical Dashboard", layout="wide")
+st.set_page_config(page_title="AEGIS Tactical Dashboard", layout="wide", initial_sidebar_state="expanded")
 st.markdown(STYLE_BLOCK, unsafe_allow_html=True)
 _ensure_seeded()
+render_sidebar_toggle_bridge()
 
 
 @st.fragment(run_every=0.5)
@@ -830,20 +885,16 @@ def render_dashboard() -> None:
     _hero()
 
     with st.container():
-        video_col, roster_col = st.columns([1.72, 1], gap="large")
+        video_col, roster_col = st.columns([1.85, 1], gap="large")
         with video_col:
             video_pane()
         with roster_col:
             roster()
 
-    _mission_band()
-
     with st.container():
-        signal_col, queue_col = st.columns([1.02, 0.98], gap="large")
+        signal_col, queue_col = st.columns([1, 1], gap="large")
         with signal_col:
             voice_hud()
-            st.markdown('<div class="stack-gap"></div>', unsafe_allow_html=True)
-            medevac()
         with queue_col:
             pending_panel()
 
