@@ -10,7 +10,7 @@ handoff.
 
 > *A shield of perception for those who shield others.*
 
-![AEGIS Tactical Map](docs/screenshots/hour-9-tactical-map-v2.png)
+![AEGIS Tactical Map](docs/screenshots/hour-11-tactical-map-patient-panel.png)
 
 ## The Problem
 
@@ -243,10 +243,10 @@ human factors review, ruggedization, and domain partnership.
 
 | Role | Owner |
 |---|---|
-| Vision pipeline | Aaryan |
-| Audio pipeline | Neal |
-| Triage engine | Ansh |
-| UI / integration / demo delivery | Aarin |
+| Vision pipeline | Aaryan Suri |
+| Audio pipeline | Neal Rangarajan |
+| Triage engine | Ansh Bhatia |
+| UI / integration / demo delivery | Aarin Basu |
 
 ## Acknowledgments
 
@@ -273,4 +273,3 @@ constraints. Review them before any non-hackathon deployment.
 ## Contact
 
 For questions about the project, open an issue in this repository.
-
