@@ -18,10 +18,17 @@ from schema import AISuggestion, Intervention, TriageCategory
 from scripts.seed_fake_data import seed
 from shared.state import app_state
 from vision.demo_profiles import get_demo_profile
+from vision.video_processing import VideoProcessor
+from vision.wound_detection import WoundAnalyzer
 
 
 class DemoPlayerError(Exception):
     pass
+
+
+class _FrameOnlyAppState:
+    def set_latest_frame(self, frame) -> None:
+        app_state.set_latest_frame(frame)
 
 
 class DemoPlayer:
@@ -38,6 +45,7 @@ class DemoPlayer:
         self._events: list[dict[str, Any]] = self._scenario["events"]
         self.duration = max((float(event["at"]) for event in self._events), default=0.0)
         self._profile = get_demo_profile(self.video_path)
+        self._processor = self._build_processor()
 
         self._stop_event = threading.Event()
         self._resume_event = threading.Event()
@@ -68,6 +76,7 @@ class DemoPlayer:
             self._state = "playing"
             self._cycle_anchor = time.monotonic()
             self._paused_t = 0.0
+            self._processor.reset()
 
             self._video_thread = threading.Thread(
                 target=self._video_loop,
@@ -123,6 +132,7 @@ class DemoPlayer:
 
         self._video_thread = None
         self._scheduler_thread = None
+        self._processor.reset()
         self._log("demo player stopped")
 
     def _elapsed_locked(self) -> float:
@@ -205,14 +215,29 @@ class DemoPlayer:
                         break
 
                 try:
-                    app_state.set_latest_frame(self._prepare_frame(frame))
+                    self._processor.recv(frame)
                 except Exception as exc:
-                    self._log(f"set_latest_frame failed: {exc}")
+                    self._log(f"processor recv failed; falling back to raw frame: {exc}")
+                    app_state.set_latest_frame(self._prepare_frame(frame))
 
                 if not self._sleep_with_control(frame_interval):
                     break
 
             capture.release()
+
+    def _build_processor(self) -> VideoProcessor:
+        yolo_weights = ROOT / "models" / "yolov8n.pt"
+        sam_checkpoint = ROOT / "models" / "mobile_sam.pt"
+        analyzer = WoundAnalyzer(
+            yolo_weights=str(yolo_weights) if yolo_weights.exists() else None,
+            sam_checkpoint=str(sam_checkpoint) if sam_checkpoint.exists() else None,
+        )
+        analysis_roi = self._profile.roi if self._profile is not None else None
+        return VideoProcessor(
+            analyzer,
+            analysis_roi=analysis_roi,
+            app_state=_FrameOnlyAppState(),
+        )
 
     def _prepare_frame(self, frame):
         if self._profile is None or self._profile.roi is None:

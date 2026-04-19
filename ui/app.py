@@ -40,8 +40,6 @@ from ui.theme import (
 
 
 def _ensure_seeded() -> None:
-    if st.session_state.get("_demo_mode_selection") == "Live Vision":
-        return
     if not app_state.get_roster():
         from scripts.seed_fake_data import seed
 
@@ -159,7 +157,7 @@ code, pre, kbd,
 }}
 
 .dashboard-intro {{
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.8rem;
 }}
 
 .dashboard-copy {{
@@ -167,6 +165,48 @@ code, pre, kbd,
     color: var(--text-muted);
     font-size: 1rem;
     line-height: 1.65;
+}}
+
+.mission-band {{
+    margin-top: 1.15rem;
+}}
+
+.mission-grid {{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1.3rem;
+    margin-top: 1.15rem;
+}}
+
+.mission-step {{
+    background: rgba(255, 255, 255, 0.45);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.15rem 1.1rem;
+    min-height: 100%;
+}}
+
+.mission-step-title {{
+    font-family: var(--font-serif) !important;
+    font-size: 1.18rem;
+    line-height: 1.08;
+    margin: 0.15rem 0 0;
+    color: var(--text-primary);
+}}
+
+.mission-step-copy {{
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin-top: 0.45rem;
+}}
+
+.dashboard-lower {{
+    margin-top: 1.35rem;
+}}
+
+.stack-gap {{
+    height: 1rem;
 }}
 
 .hud-label {{
@@ -347,6 +387,15 @@ code, pre, kbd,
     color: var(--text-primary);
     font-size: 0.98rem;
     line-height: 1.55;
+}}
+
+.pending-actions-note {{
+    margin-top: 0.65rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }}
 
 .pending-meta {{
@@ -673,6 +722,10 @@ div[data-baseweb="select"] > div,
 }}
 
 @media (max-width: 900px) {{
+    .mission-grid {{
+        grid-template-columns: 1fr 1fr;
+    }}
+
     .timeline-row {{
         grid-template-columns: 1fr;
         gap: 0.35rem;
@@ -681,6 +734,12 @@ div[data-baseweb="select"] > div,
     .medevac-row {{
         grid-template-columns: 1fr;
         gap: 0.45rem;
+    }}
+}}
+
+@media (max-width: 640px) {{
+    .mission-grid {{
+        grid-template-columns: 1fr;
     }}
 }}
 </style>
@@ -694,11 +753,63 @@ def _hero() -> None:
             <div class="card-kicker">{hud_label("AI-enhanced guidance for integrated survival")}</div>
             <h1 class="display-title">A shield of perception<br><em>for those who shield others.</em></h1>
             <p class="dashboard-copy">
-                The dashboard now carries the landing page’s editorial-meets-HUD language:
-                serif display hierarchy, monospace metadata, warm parchment surfaces, and
-                restrained doctrinal color cues.
+                AEGIS helps one medic manage many casualties by turning visual wounds,
+                respiratory cues, and triage recommendations into one medic-confirmed workflow.
+                This view shows what the system sees, what it hears, and what still requires
+                human judgment before action.
             </p>
         </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _mission_band() -> None:
+    st.markdown(
+        f"""
+        <section class="card mission-band">
+            <div class="card-header">
+                <div>
+                    <div class="card-kicker">{hud_label("How to read this dashboard")}</div>
+                    <div class="card-title">From chaos to confirmed action</div>
+                </div>
+                <div class="card-meta">human-in-the-loop triage</div>
+            </div>
+            <div class="mission-grid">
+                <div class="mission-step">
+                    <div class="card-kicker">{hud_label("Problem")}</div>
+                    <div class="mission-step-title">One medic cannot watch every casualty at once.</div>
+                    <div class="mission-step-copy">
+                        MASCAL care breaks down when attention is overloaded. The risk is missing a bleed,
+                        airway issue, or change in condition while treating someone else.
+                    </div>
+                </div>
+                <div class="mission-step">
+                    <div class="card-kicker">{hud_label("Vision")}</div>
+                    <div class="mission-step-title">The video feed tracks casualties and visible wounds.</div>
+                    <div class="mission-step-copy">
+                        Bounding boxes and wound cues surface likely hemorrhage, injury location, and scene-level
+                        focus so the medic can see who needs attention first.
+                    </div>
+                </div>
+                <div class="mission-step">
+                    <div class="card-kicker">{hud_label("Audio")}</div>
+                    <div class="mission-step-title">Breathing and voice cues add what the camera cannot.</div>
+                    <div class="mission-step-copy">
+                        Respiratory distress, verbal responses, and spoken commands appear below the video to
+                        support faster reassessment and hands-free triage.
+                    </div>
+                </div>
+                <div class="mission-step">
+                    <div class="card-kicker">{hud_label("Decision")}</div>
+                    <div class="mission-step-title">AI recommendations queue for medic confirmation.</div>
+                    <div class="mission-step-copy">
+                        Nothing critical is auto-applied. The queue on the right is where the medic confirms,
+                        dismisses, and turns perception into action.
+                    </div>
+                </div>
+            </div>
+        </section>
         """,
         unsafe_allow_html=True,
     )
@@ -725,15 +836,16 @@ def render_dashboard() -> None:
         with roster_col:
             roster()
 
-    with st.container():
-        voice_col, pending_col = st.columns([1.15, 1], gap="large")
-        with voice_col:
-            voice_hud()
-        with pending_col:
-            pending_panel()
+    _mission_band()
 
     with st.container():
-        medevac()
+        signal_col, queue_col = st.columns([1.02, 0.98], gap="large")
+        with signal_col:
+            voice_hud()
+            st.markdown('<div class="stack-gap"></div>', unsafe_allow_html=True)
+            medevac()
+        with queue_col:
+            pending_panel()
 
     with st.container():
         audit_log()

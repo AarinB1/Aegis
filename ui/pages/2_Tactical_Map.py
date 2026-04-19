@@ -763,8 +763,6 @@ class _RankerStateProxy:
 
 def _ensure_seeded() -> None:
     st.session_state.setdefault("_scenario_state", "bootstrap")
-    if st.session_state.get("_demo_mode_selection") == "Live Vision":
-        return
     if st.session_state.get("_scenario_state") in {"simulation", "off", "live_vision"}:
         return
     if not app_state.get_roster():

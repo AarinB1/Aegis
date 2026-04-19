@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 from shared.state import app_state
 from scripts.seed_fake_data import seed
 from ui.components.demo_player import DemoPlayer, DemoPlayerError
-from ui.components.live_vision_player import DEFAULT_HERO_VIDEO, LiveVisionPlayer, LiveVisionPlayerError
+from ui.components.live_vision_player import DEFAULT_HERO_VIDEO, LiveVisionPlayer
 from ui.components.simulation_seeder import clear_simulation_assets, get_simulation_assets, seed_simulation
 from ui.theme import hud_label
 
@@ -22,10 +22,6 @@ DEMO_SCENARIOS = {
         "video_path": DEFAULT_HERO_VIDEO,
         "script_path": ROOT / "scripts" / "demo_scenarios" / "mascal_90s.json",
         "duration": 90.0,
-    },
-    "Live Vision": {
-        "video_path": DEFAULT_HERO_VIDEO,
-        "duration": None,
     },
     "Simulation (mixed)": {
         "duration": None,
@@ -88,8 +84,8 @@ def controls() -> None:
             <span class="label">AEGIS</span>
         </div>
         <div class="sidebar-meta">
-            {hud_label("UI control spine")}<br>
-            Editorial surface over the shared tactical state singleton.
+            {hud_label("Demo controls")}<br>
+            Switch between baseline, scripted fallback, and mixed simulation while keeping the same shared casualty picture.
         </div>
         """,
         unsafe_allow_html=True,
@@ -117,7 +113,7 @@ def controls() -> None:
         <div class="sidebar-section">
             <div class="card-kicker">{hud_label("Demo Mode")}</div>
             <div class="sidebar-meta">
-                Same-process safety net for rehearsals and live fallback. Scripted mode stays intact while Live Vision runs the real pipeline through the shared state spine.
+                Scripted mode is the primary judge-safe demo path. Simulation mixes seeded casualties and teammate data into the same shared state.
             </div>
         </div>
         """,
@@ -176,15 +172,11 @@ def controls() -> None:
                             script_path=scenario["script_path"],
                         )
                         st.session_state["_scenario_state"] = "scripted"
-                    elif demo_mode == "Live Vision":
-                        app_state._reset_for_tests()
-                        player = LiveVisionPlayer(video_path=scenario["video_path"])
-                        st.session_state["_scenario_state"] = "live_vision"
                     else:
                         raise DemoPlayerError(f"Unsupported demo mode: {demo_mode}")
                     st.session_state["demo_player"] = player
                     player.start()
-                except (DemoPlayerError, LiveVisionPlayerError) as exc:
+                except DemoPlayerError as exc:
                     st.session_state["demo_error"] = str(exc)
                     _clear_demo_player()
             elif status["state"] == "paused":
@@ -194,7 +186,7 @@ def controls() -> None:
             st.rerun()
 
     with pause_col:
-        pause_disabled = player is None or status["state"] != "playing" or demo_mode == "Live Vision"
+        pause_disabled = player is None or status["state"] != "playing"
         if st.button("Pause", width="stretch", disabled=pause_disabled):
             player.pause()
             st.rerun()
