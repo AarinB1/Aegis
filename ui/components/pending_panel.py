@@ -30,10 +30,14 @@ def pending_panel() -> None:
         <section class="card">
             <div class="card-header">
                 <div>
-                    <div class="card-kicker">{hud_label("Pending AI")}</div>
-                    <div class="card-title">Suggestions</div>
+                    <div class="card-kicker">{hud_label("Human-in-the-loop")}</div>
+                    <div class="card-title">Medic Confirmation Queue</div>
                 </div>
                 <div class="card-meta">{len(pending_suggestions)} active</div>
+            </div>
+            <div class="card-subtle">
+                Every AI-generated recommendation lands here first. The medic confirms or
+                dismisses each item before it changes care or triage.
             </div>
             {
                 '<div class="card-subtle">No pending suggestions.</div>'
@@ -60,6 +64,7 @@ def pending_panel() -> None:
                     <div class="card-meta">AI · {confidence}%</div>
                 </div>
                 <div class="pending-text">{html.escape(raw_text)}</div>
+                <div class="pending-actions-note">Awaiting medic confirmation</div>
                 <div class="pending-meta">Pending ID {html.escape(pending.id)}</div>
             </article>
             """,

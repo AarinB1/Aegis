@@ -27,10 +27,14 @@ def voice_hud() -> None:
         <section class="card">
             <div class="card-header">
                 <div>
-                    <div class="card-kicker">{hud_label("Voice")}</div>
-                    <div class="card-title">Acoustics</div>
+                    <div class="card-kicker">{hud_label("Audio · Voice")}</div>
+                    <div class="card-title">What AEGIS Hears</div>
                 </div>
                 <div class="card-meta">{html.escape(_last_voice_decision())}</div>
+            </div>
+            <div class="card-subtle">
+                Breathing cues, verbal responses, and spoken commands appear here before they
+                change the casualty state or trigger a handoff.
             </div>
             <div class="voice-status">
                 <span class="voice-dot {'live' if live else ''}">●</span>

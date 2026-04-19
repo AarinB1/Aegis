@@ -29,12 +29,15 @@ def medevac() -> None:
             <section class="card">
                 <div class="card-header">
                     <div>
-                        <div class="card-kicker">{hud_label("Triage & Medevac")}</div>
-                        <div class="card-title">9-Line MEDEVAC</div>
+                        <div class="card-kicker">{hud_label("Evacuation handoff")}</div>
+                        <div class="card-title">9-Line Evacuation Draft</div>
                     </div>
                     <div class="card-meta">draft · unavailable</div>
                 </div>
-                <div class="card-subtle">No active MEDEVAC packet is staged in the state spine.</div>
+                <div class="card-subtle">
+                    Confirmed triage and treatment details roll up here for evacuation handoff.
+                    No active packet is staged in the state spine yet.
+                </div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -50,12 +53,15 @@ def medevac() -> None:
         <section class="card">
             <div class="medevac-head">
                 <div>
-                    <div class="card-kicker">{hud_label("Triage & Medevac")}</div>
-                    <div class="card-title">9-Line MEDEVAC · {html.escape(casualty_id)}</div>
+                    <div class="card-kicker">{hud_label("Evacuation handoff")}</div>
+                    <div class="card-title">9-Line Evacuation Draft · {html.escape(casualty_id)}</div>
                 </div>
                 <div class="card-meta">DRAFT · unconfirmed</div>
             </div>
-            <div class="card-subtle">Review the drafted packet before transmission.</div>
+            <div class="card-subtle">
+                Review the drafted handoff packet before transmission. This keeps evacuation details
+                tied to the same confirmed casualty record.
+            </div>
         </section>
         """,
         unsafe_allow_html=True,
