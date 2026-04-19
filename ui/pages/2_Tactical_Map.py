@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 import re
 import sys
+import time
 from types import MethodType
 from urllib.parse import quote
 
@@ -47,22 +48,28 @@ from ui.theme import (
     triage_label,
 )
 
-MAP_WIDTH = 1000
-MAP_HEIGHT = 600
-SAFE_PADDING = 56
-COMPOUND_LEFT = 220
-COMPOUND_TOP = 180
-COMPOUND_RIGHT = 640
-COMPOUND_BOTTOM = 420
-MEDIC_COVERAGE_RADIUS = 180
-MEDIC_ZONE_RADIUS = 200
+MAP_WIDTH = 920
+MAP_HEIGHT = 760
+SAFE_PADDING = 72
+COMPOUND_LEFT = 170
+COMPOUND_TOP = 240
+COMPOUND_RIGHT = 560
+COMPOUND_BOTTOM = 545
+MEDIC_COVERAGE_RADIUS = 205
+MEDIC_ZONE_RADIUS = 225
 UNASSIGNED_DISTANCE = 250
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac"}
+CASUALTY_MARKER_RADIUS = 16
+CASUALTY_HOVER_RADIUS = 28
+CASUALTY_SELECTED_RADIUS = 24
+CASUALTY_PRIORITY_RADIUS = 30
+MEDIC_MARKER_RADIUS = 11
+MEDIC_HOVER_RADIUS = 28
 
 MEDICS = (
-    {"id": "MEDIC_HAYES", "label": "MEDIC · SGT HAYES", "name": "SGT HAYES", "x": 350, "y": 280, "css": "medic-one"},
-    {"id": "MEDIC_RIOS", "label": "MEDIC · CPL RIOS", "name": "CPL RIOS", "x": 650, "y": 340, "css": "medic-two"},
+    {"id": "MEDIC_HAYES", "label": "MEDIC · SGT HAYES", "name": "SGT HAYES", "x": 300, "y": 355, "css": "medic-one"},
+    {"id": "MEDIC_RIOS", "label": "MEDIC · CPL RIOS", "name": "CPL RIOS", "x": 575, "y": 405, "css": "medic-two"},
 )
 
 TRIAGE_MARK_STYLES = {
@@ -365,7 +372,8 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 
 .map-shell {{
     width: 100%;
-    aspect-ratio: 1000 / 600;
+    aspect-ratio: 920 / 760;
+    min-height: 720px;
 }}
 
 .map-shell svg {{
@@ -401,7 +409,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 
 .map-label,
 .medic-label {{
-    font-size: 10px;
+    font-size: 11px;
     letter-spacing: 0.08em;
 }}
 
@@ -1346,15 +1354,21 @@ def _demo_elapsed_seconds() -> float | None:
     return float(status.get("t", 0.0) or 0.0)
 
 
-def _medic_pov_frame(medic_id: str):
+def _medic_panel_elapsed_seconds() -> float:
     elapsed = _demo_elapsed_seconds()
-    if elapsed is None:
-        return None
+    if elapsed is not None:
+        return elapsed
 
+    start_key = "_tactical_map_medic_pov_started_at"
+    started_at = float(st.session_state.setdefault(start_key, time.monotonic()))
+    return max(0.0, time.monotonic() - started_at)
+
+
+def _medic_pov_frame(medic_id: str):
     clip_path = get_medic_pov_clip(medic_id)
     if clip_path is None:
         return None
-    return sample_curated_frame(clip_path, elapsed_seconds=elapsed)
+    return sample_curated_frame(clip_path, elapsed_seconds=_medic_panel_elapsed_seconds())
 
 
 def _top_concern(casualty: Casualty, pending_by_casualty: dict[str, list[SuggestionView]], simulation_assets: dict[str, dict]) -> str:
@@ -1374,6 +1388,38 @@ def _top_confidence(casualty: Casualty, pending_by_casualty: dict[str, list[Sugg
     if top_suggestion is None:
         return 0
     return _format_percent(top_suggestion.confidence)
+
+
+def _medic_zone_concern(
+    medic_id: str,
+    casualty: Casualty,
+    ranked_lookup: dict[str, dict],
+    pending_by_casualty: dict[str, list[SuggestionView]],
+    simulation_assets: dict[str, dict],
+) -> str:
+    ranked_row = ranked_lookup.get(casualty.casualty_id, {})
+    triage_category = ranked_row.get("category", casualty.triage_category)
+    triage_text = triage_label(triage_category)
+    confidence = int(ranked_row.get("confidence") and _format_percent(ranked_row.get("confidence")) or _top_confidence(casualty, pending_by_casualty))
+    wound_count = len(casualty.wounds)
+    bleeding_count = sum(1 for wound in casualty.wounds if bool(getattr(wound, "active_bleeding", False)))
+    wound_stats = f"{wound_count} wound{'s' if wound_count != 1 else ''}"
+    if bleeding_count:
+        wound_stats += f" · {bleeding_count} bleeding"
+
+    if medic_id == "MEDIC_HAYES" and casualty.casualty_id == "A1":
+        return (
+            "Temple and lower-face bleeding; patient is on the table in critical condition and needs immediate care. "
+            f"Triage: {triage_text} · AI {confidence}% · {wound_stats}."
+        )
+
+    if medic_id == "MEDIC_RIOS" and casualty.casualty_id == "A2":
+        return (
+            "Mouth and lower-face bleeding; serious but not yet critical, with continued monitoring needed. "
+            f"Triage: {triage_text} · AI {confidence}% · {wound_stats}."
+        )
+
+    return _top_concern(casualty, pending_by_casualty, simulation_assets)
 
 
 def _tooltip_position(x: int, y: int) -> tuple[int, int]:
@@ -1419,7 +1465,14 @@ def _tooltip_html(
 
 def _corner_markers() -> str:
     markers = []
-    for x, y in ((95, 95), (905, 95), (95, 505), (905, 505)):
+    offset_x = 85
+    offset_y = 100
+    for x, y in (
+        (offset_x, offset_y),
+        (MAP_WIDTH - offset_x, offset_y),
+        (offset_x, MAP_HEIGHT - offset_y),
+        (MAP_WIDTH - offset_x, MAP_HEIGHT - offset_y),
+    ):
         markers.append(
             f"""
             <line x1="{x - 8}" y1="{y}" x2="{x + 8}" y2="{y}" stroke="{GOLD}" stroke-width="1.5" />
@@ -1609,42 +1662,42 @@ def _map_svg(
         priority_reticle = ""
         if casualty.triage_category == TriageCategory.UNASSESSED:
             marker = (
-                f'<circle cx="{x}" cy="{y}" r="12" fill="none" stroke="#FAFAF6" stroke-width="4" />'
-                f'<circle cx="{x}" cy="{y}" r="12" fill="none" stroke="{category_style["stroke"]}" stroke-width="2" />'
+                f'<circle cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="none" stroke="#FAFAF6" stroke-width="4.5" />'
+                f'<circle cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="none" stroke="{category_style["stroke"]}" stroke-width="2.2" />'
             )
         else:
             marker = (
-                f'<circle cx="{x}" cy="{y}" r="12" fill="{category_style["fill"]}" stroke="#FAFAF6" stroke-width="2" />'
+                f'<circle cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="{category_style["fill"]}" stroke="#FAFAF6" stroke-width="2.3" />'
             )
         if casualty.triage_category == TriageCategory.IMMEDIATE:
-            pulse_ring = f'<circle class="pulse-ring" cx="{x}" cy="{y}" r="12" fill="none" stroke="{RED}" stroke-width="1.5" />'
+            pulse_ring = f'<circle class="pulse-ring" cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="none" stroke="{RED}" stroke-width="1.7" />'
 
         latest_suggestion = _latest_suggestion_time(casualty, pending_by_casualty)
         if latest_suggestion is not None and (datetime.now(latest_suggestion.tzinfo) - latest_suggestion).total_seconds() <= 1.1:
             ping_ring = (
-                f'<circle class="ping-ring" cx="{x}" cy="{y}" r="12" fill="none" stroke="{GOLD}" stroke-width="2" />'
+                f'<circle class="ping-ring" cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="none" stroke="{GOLD}" stroke-width="2.1" />'
             )
 
         if casualty.casualty_id == top_priority_id:
             priority_reticle = f"""
             <g class="reticle-rotate priority-reticle" style="transform-origin: {x}px {y}px;">
-                <circle cx="{x}" cy="{y}" r="22" fill="none" stroke="{GOLD}" stroke-width="1.2" stroke-dasharray="6 8" />
-                <line x1="{x}" y1="{y - 28}" x2="{x}" y2="{y - 22}" stroke="{GOLD}" stroke-width="1.1" />
-                <line x1="{x + 22}" y1="{y}" x2="{x + 28}" y2="{y}" stroke="{GOLD}" stroke-width="1.1" />
-                <line x1="{x}" y1="{y + 22}" x2="{x}" y2="{y + 28}" stroke="{GOLD}" stroke-width="1.1" />
-                <line x1="{x - 28}" y1="{y}" x2="{x - 22}" y2="{y}" stroke="{GOLD}" stroke-width="1.1" />
+                <circle cx="{x}" cy="{y}" r="{CASUALTY_PRIORITY_RADIUS}" fill="none" stroke="{GOLD}" stroke-width="1.4" stroke-dasharray="6 8" />
+                <line x1="{x}" y1="{y - (CASUALTY_PRIORITY_RADIUS + 8)}" x2="{x}" y2="{y - (CASUALTY_PRIORITY_RADIUS + 2)}" stroke="{GOLD}" stroke-width="1.2" />
+                <line x1="{x + (CASUALTY_PRIORITY_RADIUS + 2)}" y1="{y}" x2="{x + (CASUALTY_PRIORITY_RADIUS + 8)}" y2="{y}" stroke="{GOLD}" stroke-width="1.2" />
+                <line x1="{x}" y1="{y + (CASUALTY_PRIORITY_RADIUS + 2)}" x2="{x}" y2="{y + (CASUALTY_PRIORITY_RADIUS + 8)}" stroke="{GOLD}" stroke-width="1.2" />
+                <line x1="{x - (CASUALTY_PRIORITY_RADIUS + 8)}" y1="{y}" x2="{x - (CASUALTY_PRIORITY_RADIUS + 2)}" y2="{y}" stroke="{GOLD}" stroke-width="1.2" />
             </g>
             """
 
         if casualty.casualty_id == selected_id:
             selected_ring = f"""
-            <circle cx="{x}" cy="{y}" r="18" fill="none" stroke="{GOLD}" stroke-width="2" />
+            <circle cx="{x}" cy="{y}" r="{CASUALTY_SELECTED_RADIUS}" fill="none" stroke="{GOLD}" stroke-width="2.2" />
             <g class="reticle-rotate" style="transform-origin: {x}px {y}px;">
-                <circle class="selected-reticle" cx="{x}" cy="{y}" r="24" fill="none" stroke="{GOLD}" stroke-width="1.3" stroke-dasharray="5 7" />
-                <line x1="{x}" y1="{y - 30}" x2="{x}" y2="{y - 24}" stroke="{GOLD}" stroke-width="1.2" />
-                <line x1="{x + 24}" y1="{y}" x2="{x + 30}" y2="{y}" stroke="{GOLD}" stroke-width="1.2" />
-                <line x1="{x}" y1="{y + 24}" x2="{x}" y2="{y + 30}" stroke="{GOLD}" stroke-width="1.2" />
-                <line x1="{x - 30}" y1="{y}" x2="{x - 24}" y2="{y}" stroke="{GOLD}" stroke-width="1.2" />
+                <circle class="selected-reticle" cx="{x}" cy="{y}" r="{CASUALTY_PRIORITY_RADIUS + 4}" fill="none" stroke="{GOLD}" stroke-width="1.4" stroke-dasharray="5 7" />
+                <line x1="{x}" y1="{y - (CASUALTY_PRIORITY_RADIUS + 12)}" x2="{x}" y2="{y - (CASUALTY_PRIORITY_RADIUS + 6)}" stroke="{GOLD}" stroke-width="1.2" />
+                <line x1="{x + (CASUALTY_PRIORITY_RADIUS + 6)}" y1="{y}" x2="{x + (CASUALTY_PRIORITY_RADIUS + 12)}" y2="{y}" stroke="{GOLD}" stroke-width="1.2" />
+                <line x1="{x}" y1="{y + (CASUALTY_PRIORITY_RADIUS + 6)}" x2="{x}" y2="{y + (CASUALTY_PRIORITY_RADIUS + 12)}" stroke="{GOLD}" stroke-width="1.2" />
+                <line x1="{x - (CASUALTY_PRIORITY_RADIUS + 12)}" y1="{y}" x2="{x - (CASUALTY_PRIORITY_RADIUS + 6)}" y2="{y}" stroke="{GOLD}" stroke-width="1.2" />
             </g>
             """
 
@@ -1652,7 +1705,7 @@ def _map_svg(
             f"""
             <g class="map-contact casualty-group">
                 <a class="map-link" href="{_selection_link(casualty.casualty_id)}" target="_self">
-                    <circle class="hover-glow" cx="{x}" cy="{y}" r="20" fill="{GOLD}" />
+                    <circle class="hover-glow" cx="{x}" cy="{y}" r="{CASUALTY_HOVER_RADIUS}" fill="{GOLD}" />
                     {priority_reticle}
                     {pulse_ring}
                     {ping_ring}
@@ -1670,17 +1723,17 @@ def _map_svg(
         selected_ring = ""
         if selected_id == medic["id"]:
             selected_ring = (
-                f'<circle cx="{medic["x"]}" cy="{medic["y"]}" r="20" fill="none" stroke="{GOLD}" stroke-width="1.8" />'
+                f'<circle cx="{medic["x"]}" cy="{medic["y"]}" r="{MEDIC_HOVER_RADIUS}" fill="none" stroke="{GOLD}" stroke-width="1.9" />'
             )
         medic_groups.append(
             f"""
             <g class="map-contact medic-group medic-patrol {medic["css"]}">
                 <a class="map-link" href="{_selection_link(str(medic["id"]))}" target="_self">
                     <circle cx="{medic["x"]}" cy="{medic["y"]}" r="{MEDIC_COVERAGE_RADIUS}" fill="none" stroke="{GOLD}" stroke-width="1.2" opacity="0.15" stroke-dasharray="2 4" />
-                    <circle class="hover-glow" cx="{medic["x"]}" cy="{medic["y"]}" r="22" fill="{GOLD}" />
+                    <circle class="hover-glow" cx="{medic["x"]}" cy="{medic["y"]}" r="{MEDIC_HOVER_RADIUS}" fill="{GOLD}" />
                     {selected_ring}
-                    <rect x="{int(medic["x"]) - 8}" y="{int(medic["y"]) - 8}" width="16" height="16" rx="1.5" fill="{GOLD}" transform="rotate(45 {medic["x"]} {medic["y"]})" />
-                    <text class="medic-label" x="{medic["x"]}" y="{int(medic["y"]) + 28}" text-anchor="middle">{html.escape(str(medic["label"]))}</text>
+                    <rect x="{int(medic["x"]) - MEDIC_MARKER_RADIUS}" y="{int(medic["y"]) - MEDIC_MARKER_RADIUS}" width="{MEDIC_MARKER_RADIUS * 2}" height="{MEDIC_MARKER_RADIUS * 2}" rx="1.5" fill="{GOLD}" transform="rotate(45 {medic["x"]} {medic["y"]})" />
+                    <text class="medic-label" x="{medic["x"]}" y="{int(medic["y"]) + 34}" text-anchor="middle">{html.escape(str(medic["label"]))}</text>
                 </a>
             </g>
             """
@@ -1698,18 +1751,18 @@ def _map_svg(
         </g>
         <rect x="{COMPOUND_LEFT}" y="{COMPOUND_TOP}" width="{COMPOUND_RIGHT - COMPOUND_LEFT}" height="{COMPOUND_BOTTOM - COMPOUND_TOP}" fill="none" stroke="{GOLD}" stroke-width="1.5" stroke-dasharray="8 4" opacity="0.35" />
         <text class="map-grid-label" x="{COMPOUND_LEFT + 14}" y="{COMPOUND_TOP + 18}">STRUCTURE · PARTIAL COLLAPSE</text>
-        <text class="quadrant-label" x="250" y="150" text-anchor="middle">A1</text>
-        <text class="quadrant-label" x="750" y="150" text-anchor="middle">A2</text>
-        <text class="quadrant-label" x="250" y="450" text-anchor="middle">B1</text>
-        <text class="quadrant-label" x="750" y="450" text-anchor="middle">B2</text>
+        <text class="quadrant-label" x="{int(MAP_WIDTH * 0.28)}" y="{int(MAP_HEIGHT * 0.2)}" text-anchor="middle">A1</text>
+        <text class="quadrant-label" x="{int(MAP_WIDTH * 0.78)}" y="{int(MAP_HEIGHT * 0.2)}" text-anchor="middle">A2</text>
+        <text class="quadrant-label" x="{int(MAP_WIDTH * 0.28)}" y="{int(MAP_HEIGHT * 0.74)}" text-anchor="middle">B1</text>
+        <text class="quadrant-label" x="{int(MAP_WIDTH * 0.78)}" y="{int(MAP_HEIGHT * 0.74)}" text-anchor="middle">B2</text>
         <g class="map-corners">{_corner_markers()}</g>
         <text class="map-grid-label" x="24" y="26">GRID 38TKL 042 119 · STYLIZED OVERHEAD</text>
-        <text class="map-status" x="976" y="26" text-anchor="end">{html.escape(status_text)}</text>
+        <text class="map-status" x="{MAP_WIDTH - 24}" y="26" text-anchor="end">{html.escape(status_text)}</text>
         <g class="assignment-lines">{''.join(assignment_lines)}</g>
         <g class="medic-layer">{''.join(medic_groups)}</g>
         <g class="map-casualties">{''.join(casualty_groups)}</g>
-        <text class="map-footer" x="24" y="578">{timestamp}</text>
-        <text class="map-footer" x="976" y="578" text-anchor="end" fill="{GOLD}">AEGIS ◆</text>
+        <text class="map-footer" x="24" y="{MAP_HEIGHT - 22}">{timestamp}</text>
+        <text class="map-footer" x="{MAP_WIDTH - 24}" y="{MAP_HEIGHT - 22}" text-anchor="end" fill="{GOLD}">AEGIS ◆</text>
     </svg>
     </div>
     """
@@ -1855,7 +1908,7 @@ def _render_medic_panel(
         position = positions[casualty.casualty_id]
         if _distance(position, medic_position) <= MEDIC_ZONE_RADIUS:
             zone_ranked_rows.append(ranked_lookup.get(casualty.casualty_id, {"rank": 999, "casualty_id": casualty.casualty_id}))
-            concern = _top_concern(casualty, pending_by_casualty, simulation_assets)
+            concern = _medic_zone_concern(str(medic["id"]), casualty, ranked_lookup, pending_by_casualty, simulation_assets)
             zone_rows.append(
                 f"""
                 <div class="zone-row">
@@ -2026,7 +2079,7 @@ def render_tactical_map() -> None:
     selected_id = _sync_selection({casualty.casualty_id for casualty in casualties}, medic_ids)
     ranked_rows = _ranked_roster(casualties, pending_by_casualty, simulation_assets)
 
-    map_col, detail_col, queue_col = st.columns([8.8, 4.2, 4.0], gap="small")
+    map_col, detail_col, queue_col = st.columns([9.8, 3.9, 3.5], gap="small")
 
     with map_col:
         with st.container(border=True):

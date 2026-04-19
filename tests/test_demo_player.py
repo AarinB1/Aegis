@@ -53,7 +53,7 @@ class DemoPlayerTests(unittest.TestCase):
         self.assertEqual(len(mapped_paths), 2)
         self.assertTrue(all(path.exists() for path in mapped_paths))
         self.assertEqual(MEDIC_POV_CLIP_MAP["MEDIC_HAYES"], BACKUP_RECOGNITION_VIDEO)
-        self.assertEqual(MEDIC_POV_CLIP_MAP["MEDIC_RIOS"], OPTIONAL_THIRD_VIDEO)
+        self.assertEqual(MEDIC_POV_CLIP_MAP["MEDIC_RIOS"], DEFAULT_HERO_VIDEO)
 
     def test_curated_casualty_audio_cues_are_repo_backed(self) -> None:
         self.assertEqual(set(CURATED_CASUALTY_AUDIO), {"A1", "A2", "A3"})
