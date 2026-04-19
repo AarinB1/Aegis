@@ -2,407 +2,247 @@
 
 **AI-Enhanced Guidance for Integrated Survival**
 
-An edge-deployable AI copilot that extends one combat medic's perception
-across dozens of casualties during Mass Casualty (MASCAL) events. AEGIS
-fuses zero-shot vision, audio analysis, and voice interaction to support
-SALT and TCCC triage decisions in disconnected, intermittent, low-bandwidth
-(DIL) environments.
+AEGIS is an offline, edge-deployable AI copilot for combat medics operating in
+Mass Casualty (MASCAL) events. It helps one medic manage many casualties by
+turning scene perception into a human-confirmed workflow: wound detection,
+respiratory cues, casualty prioritization, triage support, and evacuation
+handoff.
 
-> *"The aegis — a shield of protection carried into the fiercest battles."*
+> *A shield of perception for those who shield others.*
 
----
+![AEGIS Tactical Map](docs/screenshots/hour-9-tactical-map-v2.png)
 
 ## The Problem
 
-Up to 24% of battlefield deaths are potentially survivable with faster,
-more effective prehospital care. The bottleneck is not medical knowledge —
-medics know what to do — but **perception at scale**: seeing every wound,
-hearing every airway, and tracking every patient simultaneously in
-conditions designed to overwhelm human senses.
+In a MASCAL event, the bottleneck is not medical knowledge. Medics already know
+what to do. The bottleneck is **perception at scale**: seeing every wound,
+hearing every airway, tracking every casualty, and prioritizing attention fast
+enough under stress, noise, smoke, and time pressure.
 
-In a MASCAL event, one or two medics must assess, treat, and evacuate
-dozens of casualties under fire, in smoke, darkness, and deafening noise.
-AEGIS is the perception layer that makes this possible.
+AEGIS is built to reduce that overload without taking decision authority away
+from the medic.
 
----
+## What AEGIS Does
 
-## What It Does
+- **Vision**: detects casualties, localizes visible wounds, estimates bleeding
+  severity, and supports scene-level prioritization
+- **Audio**: stages respiratory cues and casualty-linked breath samples for
+  review
+- **Voice**: supports a hands-free command workflow for triage and
+  intervention logging
+- **Triage support**: uses SALT/TCCC-aligned logic to rank casualties and
+  surface the next medic action
+- **Shared state**: keeps dashboard, tactical map, queue, and medic POV views
+  synchronized through one local application state
+- **Offline operation**: runs locally with no cloud dependency
 
-AEGIS acts as a silent second set of eyes and ears for the medic:
+## Demo Surfaces
 
-- 🩸 **Wound detection & segmentation** — MobileSAM + Grounding DINO identify
-  and measure wounds in real time, flagging active hemorrhage
-- 🚑 **Scene-level casualty prioritization** — video processing ranks visible
-  casualties by bleeding burden, severity, and attention score so the medic
-  can focus on the highest-risk patient first
-- 🫁 **Respiratory monitoring** — Zero-shot CLAP audio classification detects
-  stridor, gurgling, agonal breathing, and absent respirations
-- 👥 **Casualty detection & tracking** — YOLOv8 + ByteTrack + DINOv2 re-ID
-  maintain persistent identity for every casualty across chaotic scenes
-- 🎙️ **Voice command interaction** — Whisper-powered hands-free updates let
-  the medic keep both hands on the patient
-- 🏷️ **SALT/TCCC triage decision support** — Rule-based engine aligned with
-  doctrine, with full human-in-the-loop confirmation
-- 📋 **9-line MEDEVAC request generation** — Structured evacuation requests
-  generated from the casualty roster
-- 🔒 **Fully offline operation** — No cloud, no network dependency, no data
-  leaves the device
+The current hackathon build centers on two curated demo-ready clips:
 
----
+- **Outdoor Face Wound Demo**
+  - primary hero clip
+  - expected output: one primary casualty, one primary face/neck bleeding wound
+- **Indoor Treatment Demo**
+  - bedside treatment backup clip
+  - used both as a standalone scenario and as a medic POV feed in Tactical Map
 
-## System Architecture
-┌─────────────────┐      ┌─────────────────┐
-│  Webcam (RGB)   │      │   Microphone    │
-└────────┬────────┘      └────────┬────────┘
-         │                        │
-         ▼                        ▼
-┌─────────────────┐      ┌─────────────────┐
-│ Vision Pipeline │      │ Audio Pipeline  │
-│ - YOLOv8        │      │ - CLAP          │
-│ - ByteTrack     │      │ - Resp rate     │
-│ - MobileSAM     │      │ - Whisper       │
-│ - Grounding DINO│      │                 │
-│ - DINOv2 re-ID  │      │                 │
-└────────┬────────┘      └────────┬────────┘
-         │                        │
-         └───────────┬────────────┘
-                     ▼
-         ┌──────────────────────┐
-         │  Fusion & Triage     │
-         │  Engine (SALT/TCCC)  │
-         └──────────┬───────────┘
-                    ▼
-         ┌──────────────────────┐
-         │  Casualty Database   │
-         │  (SQLite, local)     │
-         └──────────┬───────────┘
-                    ▼
-         ┌──────────────────────┐
-         │  Tactical Dashboard  │
-         └──────────────────────┘
+Available demo surfaces:
 
-See `docs/architecture.png` for the detailed system diagram.
+- **Dashboard**: live video pane, casualty roster, medic confirmation queue,
+  audio/voice panel
+- **Tactical Map**: stylized overhead plot, action queue, casualty drill-down,
+  medic POV panels, zone roster
+- **Landing page**: editorial Next.js site that mirrors the dashboard’s visual
+  language
 
----
+Canonical demo assets live in:
+
+- `assets/demo_videos/`
+- `assets/judge_reels/`
+- `docs/demo_video_manifest.md`
+
+## Safety and Human Control
+
+AEGIS is **perception augmentation**, not autonomous triage.
+
+Core safeguards in the current build:
+
+- every AI suggestion requires medic confirmation before it changes state
+- AI suggestions can be dismissed without side effects
+- expectant / deceased categorization is medic-only
+- audit history is stored locally in the shared state
+- the medic can disable AI assistance entirely from the UI
+
+## Current Architecture
+
+```text
+RGB Video ─┐
+           ├─> Vision pipeline ─┐
+Audio   ───┘                    │
+                                ├─> Shared App State ─> Dashboard / Tactical Map
+Voice Commands ────────────────┘
+                                └─> Triage engine / MEDEVAC draft / Audit trail
+```
+
+Main runtime components in this repo:
+
+- `vision/` — wound analysis, tracking, demo profiles, video processing
+- `audio/` — breathing classification assets and scripts
+- `shared/state.py` — thread-safe application state singleton
+- `triage_engine.py` — SALT/TCCC-oriented triage logic and MEDEVAC draft support
+- `scenario_ranker.py` — ranking helper used by the Tactical Map priority queue
+- `ui/` — Streamlit dashboard and Tactical Map
+- `landing/` — Next.js landing page
+- `simulation/` — teammate simulation casualties and supporting demo data
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Person detection & tracking | YOLOv8 + ByteTrack (Ultralytics) |
-| Wound segmentation | MobileSAM / EfficientSAM |
-| Open-vocabulary detection | Grounding DINO |
-| Posture classification | YOLOv8-pose / MediaPipe |
-| Re-identification | DINOv2 embeddings |
-| Audio classification | CLAP (zero-shot) |
-| Speech-to-text | Whisper |
-| Database | SQLite (local, file-based) |
+| Casualty / wound vision | YOLOv8, Grounding DINO, SAM-family segmentation, DINOv2 |
+| Tracking | ByteTrack |
+| Audio | CLAP-based respiratory classification assets and demo cues |
+| Voice | Whisper-oriented command flow |
+| Triage | local Python engine aligned to SALT / TCCC |
 | UI | Streamlit |
-| Edge target | NVIDIA Jetson Orin NX (20-40W) |
-
-All models are zero-shot or pretrained. No custom training required.
-
----
+| Landing page | Next.js 14 + TypeScript + Tailwind |
+| Edge target | Jetson Orin NX / offline laptop fallback |
 
 ## Quick Start
 
-```bash
-# Clone the repo
-git clone https://github.com/<your-org>/aegis.git
-cd aegis
+### Dashboard / Tactical Map
 
-# Set up environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+```bash
+git clone https://github.com/AarinB1/Aegis.git
+cd Aegis
+
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
-# Optional: place pretrained weights in models/
-# - YOLO: models/yolov8n.pt
-# - SAM:  models/mobile_sam.pt
-
-# Analyze a still image from Person 1's wound pipeline
-python -m vision.cli assets/test_wound.jpg --pixels-per-cm 12
-
-# Export the full Person 1 handoff artifacts
-python scripts/run_wound_detection.py assets/test_wound.jpg --pixels-per-cm 12
-
-# Run the same pipeline across a short video clip
-python scripts/run_wound_detection_video.py assets/test_wound_video.avi --pixels-per-cm 12 --frame-stride 3
-
-# Or run the hackathon demo UI
 streamlit run ui/app.py
 ```
 
-Primary integration for the hackathon is in-process Python, not HTTP.
+Once the app is open:
 
-The vision side now exposes Python helpers that can build `Suggestion`-compatible
-objects without depending on the group-owned `schema.py`:
+- use the sidebar to switch between `Off`, `Outdoor Face Wound Demo`, and
+  `Indoor Treatment Demo`
+- use `Dashboard` for the main demo flow
+- use `Tactical Map` for the ranked queue, medic POVs, and casualty drill-down
 
-```python
-from vision.integration import build_wound_suggestions, top_wound_suggestion
+### Landing Page
+
+```bash
+cd landing
+npm install
+npm run dev
 ```
 
-The FastAPI wrapper still exists in [vision/api.py](/Users/aaryansuri/Documents/New project/Aegis/vision/api.py), but it is now optional and should be treated as a demo/debug surface, not the primary mobile contract.
+The landing page serves locally on the port you choose for `next dev`. In the
+current committed build, the Launch Dashboard CTA targets
+`http://localhost:8501` by default for local development.
 
-The wound analysis payload now also includes Person 4's triage-facing fields:
+## Demo Commands
 
-- `location_type`: `head`, `torso`, or `limb`
-- `bleeding_detected`: alias of `bleeding`
-- `overall_severity`: capped sum of wound severities
-- `priority_suggestion`: `RED`, `YELLOW`, or `GREEN`
+Run the curated UI demo:
 
-Example output:
-
-```json
-{
-  "wounds_detected": true,
-  "wound_count": 2,
-  "overall_severity": 0.8,
-  "priority_suggestion": "RED",
-  "wounds": [
-    {
-      "location": { "x": 100, "y": 200, "width": 50, "height": 30 },
-      "severity": 0.7,
-      "type": "laceration",
-      "location_type": "torso",
-      "bleeding": true,
-      "bleeding_detected": true,
-      "size_cm2": 15.5,
-      "confidence": 0.85,
-      "mask_area_px": 1860,
-      "notes": "type heuristic: laceration; estimated size: 15.5 cm^2; body region: torso; active bleeding signature"
-    }
-  ],
-  "confidence": 0.85,
-  "image_quality": 0.9
-}
+```bash
+streamlit run ui/app.py
 ```
 
----
+Run the wound pipeline directly on test assets:
 
-## Demo
+```bash
+python -m vision.cli assets/test_wound.jpg --pixels-per-cm 12
+python scripts/run_wound_detection.py assets/test_wound.jpg --pixels-per-cm 12
+python scripts/run_wound_detection_video.py assets/test_wound_video.avi --pixels-per-cm 12 --frame-stride 3
+```
 
-Generate a synthetic casualty image for demos:
+Generate synthetic demo assets:
 
 ```bash
 python scripts/generate_demo_assets.py
 ```
 
-Then run either the image or video demo:
-
-```bash
-python scripts/run_wound_detection_video.py assets/test_wound_video.avi --pixels-per-cm 12 --frame-stride 3
-streamlit run ui/app.py
-```
-
-The app supports:
-
-- Image upload for quick teammate testing
-- Camera capture for mobile/laptop demos
-- Overlay rendering for wound boxes and severity
-- Raw JSON output for downstream fusion and triage components
-
-The video script produces:
-
-- An annotated demo video
-- A per-frame JSON timeline with wound detections
-- A video-level summary for triage and presentation use
-- A MASCAL scene HUD with tracked-casualty counts, recommended focus
-  casualty, and ranked attention overlay
-
-For the merge contract used by the other teammates, see `docs/person1_handoff.md`.
-
----
-
-## Demo Mode
-
-For rehearsals or as a safety net if any live pipeline is unavailable:
-
-1. `streamlit run ui/app.py`
-2. In the sidebar, set Demo Mode to `"Scripted MASCAL (90s)"`
-3. Click `Play`
-
-The dashboard will play a pre-recorded video and fire scripted suggestions,
-voice commands, and a MEDEVAC trigger over a 90-second loop. Zero external
-dependencies.
-
 ## Tactical Map
 
-Access the Tactical Map from the left sidebar after launching `streamlit run ui/app.py`. The app now exposes a native multi-page layout with `Dashboard` and `Tactical Map` views.
+The Tactical Map is a three-column instrument:
 
-The Tactical Map shows a stylized overhead scene as a live SVG instrument: a fixed combat medic at center, deterministic casualty markers colored by triage, live casualty counts in the map header, hover tooltips, and a selection line from medic to the currently selected casualty.
+- **Left**: stylized overhead plot with medic positions, casualty markers,
+  assignment lines, and triage hotspots
+- **Middle**: casualty drill-down or medic POV / zone roster depending on
+  selection
+- **Right**: live action queue ranked by canonical triage first, then AI
+  confidence
 
-The right-side panel updates by selection type:
+It also includes:
 
-- No selection shows a prompt to click a casualty on the map.
-- Selecting the medic shows a quick handoff card with a link back to the dashboard view.
-- Selecting a casualty shows identity and triage, live vision suggestions and wound summaries, intervention history, and a status footer with the casualty's live/dead indicator plus MARCH completion.
+- repo-backed casualty audio clips when available
+- clip-specific medic POV feeds
+- intervention history
+- diagnosis / rationale surfaces when present in shared state
 
-The AUDIO section on the Tactical Map is intentionally stubbed as a reserved placeholder pending Neal's pipeline integration.
+## Repo Structure
 
----
-
-## Tactical Map v2 / Simulation Mode
-
-Launch the app with `streamlit run ui/app.py`, then open `Tactical Map` from the left sidebar.
-
-The sidebar now exposes three scenario states:
-
-- `Off`
-- `Scripted MASCAL (90s)`
-- `Simulation (mixed)`
-
-`Scripted MASCAL (90s)` keeps the existing timed rehearsal flow intact. `Simulation (mixed)` resets the shared state, seeds the original three baseline casualties, then layers Neal's simulation casualties on top for a denser static instrument view with live assets.
-
-The Tactical Map v2 renders as a three-column tactical instrument:
-
-- Left: a stylized SVG overhead with faint terrain contours, grid, compound outline, quadrant labels, two drifting medics, coverage radii, casualty markers, and assignment lines to the nearest medic
-- Middle: a detail panel that switches between casualty drill-down and medic POV/zone roster depending on selection
-- Right: a live priority queue that ranks the roster continuously
-
-Map selection behavior:
-
-- Selecting a casualty shows identity, triage, last-seen time, queue rank, vision findings, wound summaries, real audio playback when a clip exists, Neal's diagnosis text, interventions, and optional triage rationale from Ansh's engine
-- Selecting a medic shows the current shared live frame, the casualties inside that medic's local zone, and the current top-ranked patient in that zone
-
-The priority queue calls Ansh's `rank_roster` helper each refresh when available, with a local triage/confidence fallback if ranking fails. The top-ranked row is highlighted in gold, and that same casualty receives a persistent gold reticle on the map.
-
-Audio playback on the Tactical Map is now live through Streamlit's native audio widget. Diagnosis text is sourced from Neal's `simulation.casualties` module, and the queue ranking uses Ansh's `scenario_ranker.rank_roster`.
-
----
-
-## Voice Commands
-
-Hold spacebar to speak. Supported commands:
-
-| Command | Action |
-|---|---|
-| `"Red tag [ID]"` | Set casualty to IMMEDIATE |
-| `"Yellow tag [ID]"` | Set casualty to DELAYED |
-| `"Green tag [ID]"` | Set casualty to MINIMAL |
-| `"Tourniquet on [location]"` | Log tourniquet intervention |
-| `"Airway clear [ID]"` | Mark airway as managed |
-| `"Pulse present [ID]"` | Confirm circulation |
-| `"Note [text]"` | Add freeform note |
-| `"MEDEVAC [ID]"` | Generate 9-line request |
-
----
-
-## Ethics & Safety
-
-**AEGIS is perception augmentation, not autonomous triage.**
-
-Core safeguards, enforced in code:
-
-- ✅ Every AI suggestion requires explicit medic confirmation
-- ✅ Expectant (black) categorization **cannot** be AI-assigned — medic only
-- ✅ Full audit log of every suggestion and decision, stored locally
-- ✅ Confidence scores shown on every AI-derived field
-- ✅ Manual override mode: disable AI suggestions entirely with one toggle
-- ✅ Known limitations documented in `docs/model_card.md`
-
-The system never makes life-or-death decisions. It surfaces information
-faster so the medic can.
-
----
-
-## Edge Deployment
-
-AEGIS is designed to run on tactical edge hardware with no network dependency:
-
-| Hardware | Target FPS | Power |
-|---|---|---|
-| NVIDIA Jetson Orin NX | 15-30 | 20-40W |
-| Laptop (GPU) | 30+ | Reference |
-| Laptop (CPU only) | 5-10 | Fallback |
-
-Benchmark results in `benchmark/results.md`.
-
----
-
-## Project Structure
-aegis/
-├── requirements.txt       # Pinned dependencies
-├── vision/                # Vision pipeline
-├── audio/                 # Audio pipeline
-├── fusion/                # Triage decision engine
-├── data/                  # Database & MEDEVAC generator
-├── ui/                    # Streamlit dashboard
-├── benchmark/             # Edge deployment benchmarks
-├── assets/                # Scenario video, audio samples
-└── docs/                  # Architecture, model card, ethics
-
----
-
-## Roadmap Beyond the MVP
-
-What we'd build with more time and resources:
-
-- **Casualty beacons** — disposable BLE/accelerometer tags for persistent
-  identity across the scene
-- **UAS overwatch** — tethered drone for top-down SALT global sort
-- **Mesh networking** — LoRa/goTenna-class store-and-forward for multi-medic
-  coordination
-- **Fine-tuned models** — partnership with USAISR/DHA for validated combat
-  wound datasets
-- **Multimodal fusion** — thermal + IR for smoke/darkness; pulse oximetry
-  integration
-- **Federated learning** — continuous model improvement without data leaving
-  the unit
-- **Clinical validation** — IRB-reviewed field trials with SOCOM medic cohorts
-
----
+```text
+Aegis/
+├── assets/                 # Demo videos, reels, and test media
+├── audio/                  # Audio assets and breathing classification scripts
+├── docs/                   # Demo manifest, screenshots, handoff docs
+├── landing/                # Next.js landing page
+├── schema.py               # Shared casualty / wound / suggestion contract
+├── scenario_ranker.py      # Priority queue ranking helper
+├── scripts/                # Demo utilities and runnable scripts
+├── shared/                 # AppState integration spine
+├── simulation/             # Simulation casualties and related demo data
+├── tests/                  # Python test suite
+├── triage_engine.py        # Triage engine and MEDEVAC support
+├── ui/                     # Streamlit dashboard and Tactical Map
+└── vision/                 # Vision pipeline
+```
 
 ## Hackathon Context
 
-Built in [X] hours by a team of 4 for [event name].
+Built during the **Critical Ops: DC National Security Hackathon** for **Meta
+Challenge #15** by a team of four in a 24-hour sprint.
 
-This is a proof-of-concept demonstrating the perception layer. Production
-deployment would require clinical validation, IRB review, hardware
-ruggedization, and partnership with military medical research institutions.
-
----
+This is a hackathon proof-of-concept, not a clinically validated medical
+device. Production deployment would require significantly deeper validation,
+human factors review, ruggedization, and domain partnership.
 
 ## Team
 
-| Role | Name |
+| Role | Owner |
 |---|---|
-| Vision pipeline | [Name] |
-| Audio pipeline | [Name] |
-| Fusion & data layer | [Name] |
-| UI & integration | [Name] |
-
----
+| Vision pipeline | Aaryan |
+| Audio pipeline | Neal |
+| Triage engine | Ansh |
+| UI / integration / demo delivery | Aarin |
 
 ## Acknowledgments
 
-AEGIS builds on the work of many open-source projects:
+AEGIS builds on and integrates with many open-source projects, including:
 
-- Meta AI for Segment Anything, DINOv2, and MobileSAM
-- Ultralytics for YOLOv8 and ByteTrack integration
-- IDEA-Research for Grounding DINO
-- LAION for CLAP
-- OpenAI for Whisper
-- The TCCC Committee and SALT Triage Working Group for the doctrine this
-  system supports
+- Ultralytics / YOLOv8
+- ByteTrack
+- Grounding DINO
+- Segment Anything family models
+- DINOv2
+- CLAP
+- Whisper
 
----
+It also draws on SALT and TCCC doctrine as the operational framing for triage
+support.
 
 ## License
 
-MIT License — see `LICENSE` for details.
+MIT License — see `LICENSE`.
 
-Note: YOLOv8 (Ultralytics) is AGPL-3.0. Production deployment should
-consider swapping to a permissively-licensed detector such as RT-DETR or
-YOLOX.
-
----
+Note: some underlying model dependencies may carry their own licenses and usage
+constraints. Review them before any non-hackathon deployment.
 
 ## Contact
 
-Questions or interested in contributing? Open an issue or reach the team at
-[email/contact].
+For questions about the project, open an issue in this repository.
 
----
-
-*AEGIS: A shield of perception for those who shield others.*
