@@ -77,7 +77,7 @@ class TriageEngine:
         try:
             evidence = self.gather_evidence(casualty)
             scores = self.calculate_triage_scores(evidence)
-            rule_priority = self.determine_priority(scores)
+            rule_priority = self.determine_priority(scores, evidence)
             llm_result = self.llm_analyzer.enhance_triage_reasoning(
                 evidence, scores, rule_priority.value
             )
@@ -184,11 +184,20 @@ class TriageEngine:
         )
         return scores
 
-    def determine_priority(self, scores: Dict) -> TriageCategory:
+    def determine_priority(self, scores: Dict, evidence: Dict = None) -> TriageCategory:
         total = scores['total_score']
+        # Unresponsive patients are always at least YELLOW (airway risk per TCCC).
+        # If they are ALSO bleeding, escalate to RED.
+        unresponsive = False
+        if evidence is not None:
+            unresponsive = evidence.get('vitals', {}).get('responsive') is False
+        if unresponsive and scores['bleeding_score'] > 0:
+            return TriageCategory.IMMEDIATE
         if (total >= 50 or scores['bleeding_score'] >= 20 or
             scores['respiratory_score'] >= 25 or scores['location_score'] >= 20):
             return TriageCategory.IMMEDIATE
+        if unresponsive:
+            return TriageCategory.DELAYED
         if (total >= 25 or scores['bleeding_score'] >= 10 or
             scores['respiratory_score'] >= 15 or scores['wound_score'] >= 20):
             return TriageCategory.DELAYED
