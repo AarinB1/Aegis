@@ -13,12 +13,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from ui.components.demo_catalog import DEFAULT_HERO_VIDEO
 from vision.demo_profiles import get_demo_profile
 from vision.video_processing import VideoProcessor
 from vision.wound_detection import WoundAnalyzer
-
-
-DEFAULT_HERO_VIDEO = ROOT / "assets" / "demo_videos" / "DOD_111088902_12_18_hero.mp4"
 
 
 class LiveVisionPlayerError(Exception):

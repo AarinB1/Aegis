@@ -7,19 +7,25 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
+from ui.components.controls import DEMO_SCENARIOS
+from ui.components.demo_catalog import CURATED_DEMO_CLIPS, DEFAULT_HERO_VIDEO, MEDIC_POV_CLIP_MAP
 from ui.components.demo_player import DemoPlayer
 
 
 class DemoPlayerTests(unittest.TestCase):
-    def test_scripted_mode_uses_canonical_hero_clip(self) -> None:
-        controls_source = Path(
-            "/Users/aaryansuri/Documents/New project/Aegis-ui/ui/components/controls.py"
-        ).read_text()
-        self.assertIn(
-            '"Scripted MASCAL (90s)": {\n        "video_path": DEFAULT_HERO_VIDEO,',
-            controls_source,
-        )
-        self.assertNotIn('"Live Vision": {', controls_source)
+    def test_demo_menu_keeps_only_off_and_scripted(self) -> None:
+        self.assertEqual(list(DEMO_SCENARIOS.keys()), ["Off", "Scripted MASCAL (90s)"])
+        self.assertEqual(DEMO_SCENARIOS["Scripted MASCAL (90s)"]["video_path"], DEFAULT_HERO_VIDEO)
+
+    def test_curated_catalog_is_ready_for_multiple_clips(self) -> None:
+        self.assertGreaterEqual(len(CURATED_DEMO_CLIPS), 3)
+        self.assertTrue(all(clip.video_path.exists() for clip in CURATED_DEMO_CLIPS.values()))
+
+    def test_medic_pov_clip_map_uses_distinct_existing_videos(self) -> None:
+        self.assertEqual(set(MEDIC_POV_CLIP_MAP), {"MEDIC_HAYES", "MEDIC_RIOS"})
+        mapped_paths = {path.resolve() for path in MEDIC_POV_CLIP_MAP.values()}
+        self.assertEqual(len(mapped_paths), 2)
+        self.assertTrue(all(path.exists() for path in mapped_paths))
 
     def test_demo_player_uses_demo_profile_clip_window_and_crop(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
