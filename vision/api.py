@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 from vision.contracts import MobileVisionResponse, WoundAnalysisResult
+from vision.runtime import resolve_runtime_sam_checkpoint, resolve_runtime_yolo_weights
 from vision.summary import summarize_analysis
 from vision.wound_detection import WoundAnalyzer
 
@@ -25,10 +26,8 @@ app.add_middleware(
 )
 
 analyzer = WoundAnalyzer(
-    yolo_weights=str(Path("models") / "yolov8n.pt") if (Path("models") / "yolov8n.pt").exists() else None,
-    sam_checkpoint=str(Path("models") / "mobile_sam.pt")
-    if (Path("models") / "mobile_sam.pt").exists()
-    else None,
+    yolo_weights=resolve_runtime_yolo_weights(),
+    sam_checkpoint=resolve_runtime_sam_checkpoint(),
 )
 
 
