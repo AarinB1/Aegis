@@ -242,6 +242,35 @@ The AUDIO section on the Tactical Map is intentionally stubbed as a reserved pla
 
 ---
 
+## Tactical Map v2 / Simulation Mode
+
+Launch the app with `streamlit run ui/app.py`, then open `Tactical Map` from the left sidebar.
+
+The sidebar now exposes three scenario states:
+
+- `Off`
+- `Scripted MASCAL (90s)`
+- `Simulation (mixed)`
+
+`Scripted MASCAL (90s)` keeps the existing timed rehearsal flow intact. `Simulation (mixed)` resets the shared state, seeds the original three baseline casualties, then layers Neal's simulation casualties on top for a denser static instrument view with live assets.
+
+The Tactical Map v2 renders as a three-column tactical instrument:
+
+- Left: a stylized SVG overhead with faint terrain contours, grid, compound outline, quadrant labels, two drifting medics, coverage radii, casualty markers, and assignment lines to the nearest medic
+- Middle: a detail panel that switches between casualty drill-down and medic POV/zone roster depending on selection
+- Right: a live priority queue that ranks the roster continuously
+
+Map selection behavior:
+
+- Selecting a casualty shows identity, triage, last-seen time, queue rank, vision findings, wound summaries, real audio playback when a clip exists, Neal's diagnosis text, interventions, and optional triage rationale from Ansh's engine
+- Selecting a medic shows the current shared live frame, the casualties inside that medic's local zone, and the current top-ranked patient in that zone
+
+The priority queue calls Ansh's `rank_roster` helper each refresh when available, with a local triage/confidence fallback if ranking fails. The top-ranked row is highlighted in gold, and that same casualty receives a persistent gold reticle on the map.
+
+Audio playback on the Tactical Map is now live through Streamlit's native audio widget. Diagnosis text is sourced from Neal's `simulation.casualties` module, and the queue ranking uses Ansh's `scenario_ranker.rank_roster`.
+
+---
+
 ## Voice Commands
 
 Hold spacebar to speak. Supported commands:
