@@ -75,7 +75,7 @@ CURATED_DEMO_CLIPS: dict[str, CuratedClip] = {
 
 MEDIC_POV_CLIP_MAP: dict[str, Path] = {
     "MEDIC_HAYES": CURATED_DEMO_CLIPS["backup"].video_path,
-    "MEDIC_RIOS": CURATED_DEMO_CLIPS["optional_third"].video_path,
+    "MEDIC_RIOS": CURATED_DEMO_CLIPS["primary"].video_path,
 }
 
 CURATED_CASUALTY_AUDIO: dict[str, CuratedAudioCue] = {
