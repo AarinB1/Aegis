@@ -76,5 +76,3 @@ def evaluate_all():
         })
 
     return results
-
-print(evaluate_all())
