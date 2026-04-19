@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: aegis-dashboard
+    runtime: docker
+    dockerfilePath: ./Dockerfile.streamlit
+    dockerContext: .
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: AEGIS_ALLOW_BUILTIN_YOLO
+        value: "false"

@@ -2,6 +2,17 @@ import type { Metadata } from "next";
 import { Fraunces, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
+const resolvedSiteUrl = (() => {
+  const raw =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL ||
+    "http://localhost:3000";
+  return raw.startsWith("http://") || raw.startsWith("https://")
+    ? raw
+    : `https://${raw}`;
+})();
+
 const fraunces = Fraunces({
   subsets: ["latin"],
   display: "swap",
@@ -28,7 +39,7 @@ export const metadata: Metadata = {
   title: "AEGIS — A shield of perception for those who shield others.",
   description:
     "AI-Enhanced Guidance for Integrated Survival. An edge-deployable AI copilot that extends one combat medic's perception across dozens of casualties during Mass Casualty events.",
-  metadataBase: new URL("http://localhost:3000"),
+  metadataBase: new URL(resolvedSiteUrl),
   openGraph: {
     title: "AEGIS — AI-Enhanced Guidance for Integrated Survival",
     description:

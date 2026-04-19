@@ -1,88 +1,41 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import { LinkButton } from "./Button";
+import { Container } from "./Container";
 import { Wordmark } from "./Wordmark";
 
 const links = [
-  { href: "#features", label: "Features" },
-  { href: "#ethics", label: "Ethics" },
-  { href: "#faq", label: "FAQ" },
+  { label: "Features", href: "#features" },
+  { label: "Ethics", href: "#ethics" },
+  { label: "FAQ", href: "#faq" },
 ];
 
 export function NavBar() {
-  const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
   return (
-    <header
-      className={[
-        "fixed inset-x-0 top-0 z-50 transition-colors duration-300 ease-damped",
-        scrolled
-          ? "border-b border-hairline bg-paper/85 backdrop-blur-md"
-          : "border-b border-transparent bg-transparent",
-      ].join(" ")}
-    >
-      <nav
-        className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 lg:px-10"
-        aria-label="Primary"
-      >
-        <a href="#top" className="flex items-center">
+    <header className="sticky top-0 z-30 border-b border-hairline/70 bg-paper/90 backdrop-blur">
+      <Container className="flex items-center justify-between gap-6 py-5">
+        <a href="#top" className="transition-opacity hover:opacity-80">
           <Wordmark />
         </a>
 
-        <ul className="hidden items-center gap-8 md:flex">
-          {links.map((l) => (
-            <li key={l.href}>
-              <a
-                href={l.href}
-                className="text-sm text-ink-muted transition-colors hover:text-ink"
-              >
-                {l.label}
-              </a>
-            </li>
-          ))}
-        </ul>
-
-        <div className="flex items-center gap-2">
-          <LinkButton
-            href="http://localhost:8501"
-            variant="primary"
-            className="hidden sm:inline-flex"
-          >
-            Launch Dashboard
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
-              aria-hidden
-              className="opacity-80"
+        <nav className="hidden items-center gap-7 md:flex">
+          {links.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              className="font-mono text-[11px] uppercase tracking-[0.18em] text-ink-muted transition-colors hover:text-ink"
             >
-              <path
-                d="M3 9l6-6M5 3h4v4"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                fill="none"
-              />
-            </svg>
-          </LinkButton>
-          <LinkButton
-            href="http://localhost:8501"
-            variant="primary"
-            className="sm:hidden"
-          >
-            Launch
-          </LinkButton>
-        </div>
-      </nav>
+              {link.label}
+            </a>
+          ))}
+        </nav>
+
+        <LinkButton
+          href="https://github.com/AarinB1/Aegis"
+          variant="secondary"
+          className="hidden sm:inline-flex"
+        >
+          View Repo
+        </LinkButton>
+      </Container>
     </header>
   );
 }

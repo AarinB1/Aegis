@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from ui.components.demo_catalog import DEFAULT_HERO_VIDEO
 from vision.demo_profiles import get_demo_profile
+from vision.runtime import resolve_runtime_sam_checkpoint, resolve_runtime_yolo_weights
 from vision.video_processing import VideoProcessor
 from vision.wound_detection import WoundAnalyzer
 
@@ -111,11 +112,9 @@ class LiveVisionPlayer:
         self._log("live vision player stopped")
 
     def _build_processor(self) -> VideoProcessor:
-        yolo_weights = ROOT / "models" / "yolov8n.pt"
-        sam_checkpoint = ROOT / "models" / "mobile_sam.pt"
         analyzer = WoundAnalyzer(
-            yolo_weights=str(yolo_weights) if yolo_weights.exists() else None,
-            sam_checkpoint=str(sam_checkpoint) if sam_checkpoint.exists() else None,
+            yolo_weights=resolve_runtime_yolo_weights(),
+            sam_checkpoint=resolve_runtime_sam_checkpoint(),
         )
         analysis_roi = self._profile.roi if self._profile is not None else None
         return VideoProcessor(analyzer, analysis_roi=analysis_roi)
