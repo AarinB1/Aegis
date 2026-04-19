@@ -19,7 +19,7 @@ from ui.theme import hud_label
 DEMO_SCENARIOS = {
     "Off": None,
     "Scripted MASCAL (90s)": {
-        "video_path": ROOT / "assets" / "test_wound_video.avi",
+        "video_path": DEFAULT_HERO_VIDEO,
         "script_path": ROOT / "scripts" / "demo_scenarios" / "mascal_90s.json",
         "duration": 90.0,
     },

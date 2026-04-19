@@ -1,6 +1,6 @@
 {
   "name": "MASCAL 90-second demo",
-  "description": "Three casualties, escalating triage, airway management, and one MEDEVAC request.",
+  "description": "Three casualties, escalating triage, airway management, and one MEDEVAC request against the canonical hero clip.",
   "events": [
     {
       "at": 0.0,
@@ -25,13 +25,13 @@
       "transcription": "red tag A2"
     },
     {
-      "at": 7.2,
+      "at": 6.8,
       "type": "voice",
       "state": "confirmed",
       "transcription": "red tag A2"
     },
     {
-      "at": 7.5,
+      "at": 7.0,
       "type": "triage_update",
       "casualty_id": "A2",
       "triage_category": "IMMEDIATE"
@@ -45,13 +45,13 @@
       "confidence": 0.87
     },
     {
-      "at": 16.0,
+      "at": 15.0,
       "type": "voice",
       "state": "listening",
       "transcription": "airway adjunct A1"
     },
     {
-      "at": 17.8,
+      "at": 15.8,
       "type": "intervention",
       "casualty_id": "A1",
       "intervention_type": "npa",
@@ -68,19 +68,19 @@
       "confidence": 0.72
     },
     {
-      "at": 32.0,
+      "at": 30.0,
       "type": "voice",
       "state": "listening",
       "transcription": "yellow tag A3"
     },
     {
-      "at": 33.1,
+      "at": 30.8,
       "type": "voice",
       "state": "confirmed",
       "transcription": "yellow tag A3"
     },
     {
-      "at": 33.4,
+      "at": 31.0,
       "type": "triage_update",
       "casualty_id": "A3",
       "triage_category": "DELAYED"
@@ -109,13 +109,13 @@
       "transcription": "prepare medevac A2"
     },
     {
-      "at": 58.5,
+      "at": 57.8,
       "type": "voice",
       "state": "confirmed",
       "transcription": "prepare medevac A2"
     },
     {
-      "at": 70.0,
+      "at": 66.0,
       "type": "medevac",
       "casualty_id": "A2",
       "nine_line": {
@@ -132,7 +132,7 @@
       }
     },
     {
-      "at": 76.0,
+      "at": 75.0,
       "type": "suggestion",
       "source": "audio",
       "casualty_id": "A1",

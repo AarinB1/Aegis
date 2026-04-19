@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 from schema import AISuggestion, Intervention, TriageCategory
 from scripts.seed_fake_data import seed
 from shared.state import app_state
+from vision.demo_profiles import get_demo_profile
 
 
 class DemoPlayerError(Exception):
@@ -36,6 +37,7 @@ class DemoPlayer:
         self._scenario = self._load_scenario(self.script_path)
         self._events: list[dict[str, Any]] = self._scenario["events"]
         self.duration = max((float(event["at"]) for event in self._events), default=0.0)
+        self._profile = get_demo_profile(self.video_path)
 
         self._stop_event = threading.Event()
         self._resume_event = threading.Event()
@@ -182,21 +184,28 @@ class DemoPlayer:
 
             fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
             frame_interval = 1.0 / fps if fps > 0 else 1.0 / 15.0
+            start_frame, end_frame = self._clip_bounds(capture, fps)
+            if start_frame:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
             while not self._stop_event.is_set():
                 if not self._wait_until_running():
                     break
 
+                current_frame = int(capture.get(cv2.CAP_PROP_POS_FRAMES) or 0)
+                if end_frame is not None and current_frame >= end_frame:
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
                 ok, frame = capture.read()
                 if not ok:
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
                     ok, frame = capture.read()
                     if not ok:
                         self._log("video loop hit EOF and failed to restart; retrying capture")
                         break
 
                 try:
-                    app_state.set_latest_frame(frame)
+                    app_state.set_latest_frame(self._prepare_frame(frame))
                 except Exception as exc:
                     self._log(f"set_latest_frame failed: {exc}")
 
@@ -204,6 +213,31 @@ class DemoPlayer:
                     break
 
             capture.release()
+
+    def _prepare_frame(self, frame):
+        if self._profile is None or self._profile.roi is None:
+            return frame
+        x, y, w, h = self._profile.roi
+        height, width = frame.shape[:2]
+        x1 = max(0, min(x, width - 1))
+        y1 = max(0, min(y, height - 1))
+        x2 = max(x1 + 1, min(x + w, width))
+        y2 = max(y1 + 1, min(y + h, height))
+        return frame[y1:y2, x1:x2].copy()
+
+    def _clip_bounds(self, capture: cv2.VideoCapture, fps: float) -> tuple[int, int | None]:
+        if fps <= 0:
+            return (0, None)
+        if self._profile is None or self._profile.clip_window_seconds is None:
+            return (0, None)
+
+        total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        start_seconds, end_seconds = self._profile.clip_window_seconds
+        start_frame = max(0, int(round(start_seconds * fps)))
+        end_frame = max(start_frame + 1, int(round(end_seconds * fps)))
+        if total_frames > 0:
+            end_frame = min(end_frame, total_frames)
+        return (start_frame, end_frame)
 
     def _scheduler_loop(self) -> None:
         loop_count = 0
