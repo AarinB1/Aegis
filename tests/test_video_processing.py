@@ -272,6 +272,53 @@ class MultiTrackBlinkingFakeAnalyzer:
         return "heuristic"
 
 
+class UnreliableHeroFakeAnalyzer:
+    def detect_person_rois(self, image):
+        return [(0, 0, image.shape[1], image.shape[0])]
+
+    def analyze_image(self, image, pixels_per_cm=None):
+        return {
+            "wounds_detected": True,
+            "wound_count": 2,
+            "wounds": [
+                {
+                    "location": {"x": 610, "y": 132, "width": 110, "height": 92},
+                    "severity": 0.85,
+                    "type": "laceration",
+                    "location_type": "head",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 42.5,
+                    "confidence": 0.98,
+                    "mask_area_px": 3800,
+                    "notes": "face wound",
+                },
+                {
+                    "location": {"x": 442, "y": 650, "width": 28, "height": 98},
+                    "severity": 0.58,
+                    "type": "puncture",
+                    "location_type": "limb",
+                    "bleeding": True,
+                    "bleeding_detected": True,
+                    "size_cm2": 8.4,
+                    "confidence": 0.82,
+                    "mask_area_px": 520,
+                    "notes": "secondary wound",
+                },
+            ],
+            "overall_severity": 1.0,
+            "priority_suggestion": "RED",
+            "confidence": 0.95,
+            "image_quality": 0.9,
+        }
+
+    def last_person_detection_reliable(self):
+        return False
+
+    def detection_mode(self):
+        return "heuristic"
+
+
 class VideoProcessingTests(unittest.TestCase):
     def test_recv_updates_state_and_keeps_track_stable(self) -> None:
         fake_state = FakeState()
@@ -498,6 +545,51 @@ class VideoProcessingTests(unittest.TestCase):
             self.assertEqual(first["frames"][0]["frame_index"], 0)
             self.assertEqual(second["frames"][0]["frame_index"], 0)
             self.assertEqual(first_last_frame, second_last_frame)
+
+    def test_demo_profile_trims_roster_to_high_confidence_primary_casualty(self) -> None:
+        processor = VideoProcessor(FakeAnalyzer())
+        processor._current_demo_profile = get_demo_profile("DOD_111088902_12_18_hero.mp4")
+        casualties = [
+            {
+                "alias": "A1",
+                "analysis": {
+                    "wound_count": 1,
+                    "confidence": 0.94,
+                    "overall_severity": 0.83,
+                },
+            },
+            {
+                "alias": "A2",
+                "analysis": {
+                    "wound_count": 1,
+                    "confidence": 0.44,
+                    "overall_severity": 0.29,
+                },
+            },
+        ]
+
+        filtered = processor._filter_publishable_casualties(casualties)
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["alias"], "A1")
+
+    def test_unreliable_person_detection_falls_back_to_wound_centered_box(self) -> None:
+        processor = VideoProcessor(UnreliableHeroFakeAnalyzer())
+        processor._current_demo_profile = get_demo_profile("DOD_111088902_12_18_hero.mp4")
+        analysis = processor.analyzer.analyze_image(np.zeros((980, 1200, 3), dtype=np.uint8))
+
+        detections = processor._candidate_detections(
+            [(0, 0, 1200, 980)],
+            analysis,
+            (980, 1200),
+        )
+
+        self.assertEqual(len(detections), 1)
+        x1, y1, x2, y2 = detections[0]
+        self.assertLess(x2 - x1, 500)
+        self.assertLess(y2 - y1, 500)
+        self.assertGreaterEqual(x1, 0)
+        self.assertGreaterEqual(y1, 0)
 
     def _write_test_video(self, path: Path) -> None:
         writer = cv2.VideoWriter(

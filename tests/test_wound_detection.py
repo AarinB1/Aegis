@@ -3,6 +3,8 @@ import unittest
 import cv2
 import numpy as np
 
+from vision.contracts import BoundingBox, WoundRecord
+from vision.demo_profiles import get_demo_profile
 from vision.triage import infer_location_type
 from vision.triage import calculate_wound_severity
 from vision.wound_detection import CandidateRegion, WoundAnalyzer
@@ -140,6 +142,41 @@ class WoundDetectionTests(unittest.TestCase):
 
         self.assertIn((260, 180, 300, 150), filtered)
         self.assertLess(len(filtered), len(rois))
+
+    def test_demo_profile_focuses_hero_clip_on_face_wound(self) -> None:
+        analyzer = WoundAnalyzer()
+        profile = get_demo_profile("DOD_111088902_12_18_hero.mp4")
+        self.assertIsNotNone(profile)
+
+        face_wound = WoundRecord(
+            location=BoundingBox(x=610, y=132, width=110, height=92),
+            severity=0.85,
+            type="laceration",
+            location_type="head",
+            bleeding=True,
+            bleeding_detected=True,
+            size_cm2=42.5,
+            confidence=0.98,
+            mask_area_px=3800,
+            notes="face wound",
+        )
+        lower_body_wound = WoundRecord(
+            location=BoundingBox(x=442, y=650, width=28, height=98),
+            severity=0.58,
+            type="puncture",
+            location_type="limb",
+            bleeding=True,
+            bleeding_detected=True,
+            size_cm2=8.4,
+            confidence=0.82,
+            mask_area_px=520,
+            notes="strap-adjacent wound",
+        )
+
+        filtered = analyzer._apply_demo_profile_filters([face_wound, lower_body_wound], profile)
+
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0].notes, "face wound")
 
 
 if __name__ == "__main__":

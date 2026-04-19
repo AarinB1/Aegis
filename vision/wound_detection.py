@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from vision.contracts import BoundingBox, WoundAnalysisResult, WoundRecord
+from vision.demo_profiles import DemoVideoProfile, get_demo_profile_for_frame_shape
 from vision.triage import calculate_overall_severity, calculate_priority_suggestion, calculate_wound_severity, infer_location_type
 
 try:
@@ -48,6 +49,8 @@ class WoundAnalyzer:
         self.fallback_pixels_per_cm = fallback_pixels_per_cm
         self.yolo_model = self._load_yolo(yolo_weights)
         self.sam_predictor = self._load_sam(sam_type, sam_checkpoint)
+        self._last_person_detected = False
+        self._last_demo_profile: DemoVideoProfile | None = None
 
     def analyze_image(
         self,
@@ -58,8 +61,11 @@ class WoundAnalyzer:
             raise ValueError("image must be a non-empty numpy array")
 
         bgr = self._ensure_bgr(image)
+        demo_profile = get_demo_profile_for_frame_shape(bgr.shape[:2])
+        self._last_demo_profile = demo_profile
         image_quality = self._estimate_image_quality(bgr)
         rois, person_detected = self._detect_person_rois_with_source(bgr)
+        self._last_person_detected = person_detected
         candidate_regions: List[CandidateRegion] = []
 
         for roi in rois:
@@ -95,6 +101,7 @@ class WoundAnalyzer:
         deduped_candidates = self._dedupe_candidates(candidate_regions)
         scale = pixels_per_cm or self._estimate_pixels_per_cm(bgr, rois, person_detected=person_detected)
         wounds = [self._candidate_to_wound(candidate, scale) for candidate in deduped_candidates]
+        wounds = self._apply_demo_profile_filters(wounds, demo_profile)
         overall_severity = calculate_overall_severity(wounds)
         priority_suggestion = calculate_priority_suggestion(wounds)
         overall_confidence = self._aggregate_confidence(wounds, image_quality)
@@ -122,7 +129,16 @@ class WoundAnalyzer:
 
     def detect_person_rois(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         bgr = self._ensure_bgr(image)
-        return self._detect_person_rois(bgr)
+        rois, person_detected = self._detect_person_rois_with_source(bgr)
+        self._last_person_detected = person_detected
+        self._last_demo_profile = get_demo_profile_for_frame_shape(bgr.shape[:2])
+        return rois
+
+    def last_person_detection_reliable(self) -> bool:
+        return self._last_person_detected
+
+    def last_demo_profile(self) -> DemoVideoProfile | None:
+        return self._last_demo_profile
 
     def detection_mode(self) -> str:
         if self.yolo_model is not None and self.sam_predictor is not None:
@@ -550,6 +566,53 @@ class WoundAnalyzer:
             return round(float(0.3 * image_quality), 3)
         wound_confidence = sum(wound.confidence for wound in wounds) / len(wounds)
         return round(float(min(0.7 * wound_confidence + 0.3 * image_quality, 0.99)), 3)
+
+    def _apply_demo_profile_filters(
+        self,
+        wounds: Sequence[WoundRecord],
+        profile: DemoVideoProfile | None,
+    ) -> List[WoundRecord]:
+        wound_list = list(wounds)
+        if not wound_list or profile is None:
+            return wound_list
+
+        if profile.wound_focus_roi is not None:
+            focused = [
+                wound for wound in wound_list if self._wound_intersects_roi(wound, profile.wound_focus_roi)
+            ]
+            if focused:
+                wound_list = focused
+
+        wound_list.sort(key=lambda wound: self._demo_wound_score(wound, profile), reverse=True)
+
+        if profile.max_wounds is not None:
+            wound_list = wound_list[: profile.max_wounds]
+
+        return wound_list
+
+    def _wound_intersects_roi(
+        self,
+        wound: WoundRecord,
+        roi: Tuple[int, int, int, int],
+    ) -> bool:
+        rx, ry, rw, rh = roi
+        wx = int(wound.location.x)
+        wy = int(wound.location.y)
+        ww = int(wound.location.width)
+        wh = int(wound.location.height)
+        inter_x1 = max(rx, wx)
+        inter_y1 = max(ry, wy)
+        inter_x2 = min(rx + rw, wx + ww)
+        inter_y2 = min(ry + rh, wy + wh)
+        return inter_x2 > inter_x1 and inter_y2 > inter_y1
+
+    def _demo_wound_score(self, wound: WoundRecord, profile: DemoVideoProfile) -> float:
+        score = (0.42 * wound.confidence) + (0.33 * wound.severity) + min(wound.size_cm2 / 60.0, 0.15)
+        if wound.bleeding:
+            score += 0.18
+        if profile.wound_focus_roi is not None and self._wound_intersects_roi(wound, profile.wound_focus_roi):
+            score += 0.2
+        return round(score, 3)
 
     def _dedupe_candidates(self, candidates: Sequence[CandidateRegion]) -> List[CandidateRegion]:
         kept: List[CandidateRegion] = []
