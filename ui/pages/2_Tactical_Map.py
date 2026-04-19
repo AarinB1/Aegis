@@ -709,29 +709,34 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
     color: var(--text-muted);
 }}
 
-.queue-row {{
+.queue-list {{
     display: flex;
-    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.65rem;
+}}
+
+.queue-row {{
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
     position: relative;
-    gap: 10px;
-    padding: 10px;
+    column-gap: 0.8rem;
+    padding: 0.82rem 0.88rem;
     min-width: 0;
-    border-top: 1px solid #E8E4D8;
+    border: 1px solid rgba(232, 228, 216, 0.95);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.46);
 }}
 
 .queue-row,
 .queue-row * {{
     word-break: normal;
-    overflow-wrap: break-word;
+    overflow-wrap: normal;
 }}
 
 .queue-row.top {{
-    background: rgba(184, 130, 15, 0.06);
-    border-radius: 12px;
-}}
-
-.queue-row:first-of-type {{
-    border-top: 0;
+    background: rgba(184, 130, 15, 0.08);
+    border-color: rgba(184, 130, 15, 0.22);
 }}
 
 .queue-row.selected {{
@@ -740,27 +745,33 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
     border-radius: 12px;
 }}
 
+.queue-leading {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: max-content;
+}}
+
 .queue-rank {{
-    flex: 0 0 28px;
-    padding-right: 10px;
+    min-width: 2ch;
     color: #7A7668;
     font-family: var(--font-mono);
     font-size: 14px;
     letter-spacing: 0.12em;
-    line-height: 1.25;
+    line-height: 1;
+    text-align: right;
 }}
 
 .queue-dot {{
-    flex: 0 0 12px;
     width: 12px;
     height: 12px;
     border-radius: 999px;
-    margin-top: 3px;
 }}
 
 .queue-main {{
-    flex: 1 1 auto;
     min-width: 0;
+    display: grid;
+    gap: 0.2rem;
 }}
 
 .queue-name {{
@@ -769,27 +780,29 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
     line-height: 1.25;
     font-weight: 600;
     white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: normal;
 }}
 
 .queue-track {{
-    margin-top: 0.08rem;
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
+    white-space: nowrap;
 }}
 
 .queue-summary {{
     color: var(--text-muted);
     font-size: 11px;
     line-height: 1.45;
-    margin-top: 0.22rem;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     white-space: normal;
+    overflow-wrap: anywhere;
 }}
 
 .queue-select,
@@ -808,11 +821,10 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 }}
 
 .queue-select {{
-    flex: 0 0 70px;
-    width: 70px;
-    min-width: 70px;
+    min-width: 78px;
+    justify-self: end;
     align-self: center;
-    padding: 0.38rem 0.55rem;
+    padding: 0.42rem 0.68rem;
 }}
 
 .queue-select:hover,
@@ -900,9 +912,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 
 @media (max-width: 1180px) {{
     .queue-select {{
-        flex-basis: 64px;
-        width: 64px;
-        min-width: 64px;
+        min-width: 72px;
     }}
 }}
 
@@ -1309,14 +1319,19 @@ def _audio_asset_info(casualty: Casualty, simulation_assets: dict[str, dict]) ->
 
 
 def _queue_patient_label(casualty_id: str) -> str:
-    match = re.fullmatch(r"A(\d+)", str(casualty_id))
-    if match:
+    raw_value = str(casualty_id).strip()
+    if match := re.fullmatch(r"A0*(\d+)", raw_value, re.IGNORECASE):
         return f"Patient {int(match.group(1)):02d}"
-    return f"Patient {str(casualty_id)}"
+    if match := re.fullmatch(r"Patient[\s_-]*0*(\d+)", raw_value, re.IGNORECASE):
+        return f"Patient {int(match.group(1)):02d}"
+    return raw_value
 
 
-def _queue_track_label(casualty_id: str) -> str:
-    return f"Track {str(casualty_id)}"
+def _queue_track_label(casualty_id: str) -> str | None:
+    raw_value = str(casualty_id).strip()
+    if match := re.fullmatch(r"A0*(\d+)", raw_value, re.IGNORECASE):
+        return f"Track A{int(match.group(1))}"
+    return None
 
 
 def _demo_elapsed_seconds() -> float | None:
@@ -1712,14 +1727,18 @@ def _queue_html(ranked_rows: list[dict], selected_id: str | None) -> str:
             classes.append("top")
         if row["casualty_id"] == selected_id:
             classes.append("selected")
+        track_label = _queue_track_label(str(row["casualty_id"]))
+        track_markup = f'<div class="queue-track">{html.escape(track_label)}</div>' if track_label else ""
         rows.append(
             f"""
             <div class="{' '.join(classes)}">
-                <div class="queue-rank">{int(row["rank"]):02d}</div>
-                <div class="queue-dot" style="background:{fill};border:1.5px solid {style["stroke"]};"></div>
+                <div class="queue-leading">
+                    <div class="queue-rank">{int(row["rank"]):02d}</div>
+                    <div class="queue-dot" style="background:{fill};border:1.5px solid {style["stroke"]};"></div>
+                </div>
                 <div class="queue-main">
                     <div class="queue-name">{html.escape(_queue_patient_label(str(row["casualty_id"])))}</div>
-                    <div class="queue-track">{html.escape(_queue_track_label(str(row["casualty_id"])))}</div>
+                    {track_markup}
                     <div class="queue-summary">{html.escape(str(row["top_concern"]))}</div>
                 </div>
                 <a class="queue-select" href="{_selection_link(str(row["casualty_id"]))}" target="_self">SELECT</a>
@@ -2007,7 +2026,7 @@ def render_tactical_map() -> None:
     selected_id = _sync_selection({casualty.casualty_id for casualty in casualties}, medic_ids)
     ranked_rows = _ranked_roster(casualties, pending_by_casualty, simulation_assets)
 
-    map_col, detail_col, queue_col = st.columns([9, 4, 3], gap="small")
+    map_col, detail_col, queue_col = st.columns([8.8, 4.2, 4.0], gap="small")
 
     with map_col:
         with st.container(border=True):
