@@ -66,22 +66,15 @@ def evaluate_all():
     for sim in casualties:
         real = sim_to_real(sim)
         priority, reasoning = get_priority_and_reasoning(real)
-        sim.priority = priority
-        sim.reasoning = reasoning
-        results.append(sim)
+
+        results.append({
+            "id": sim.id,
+            "priority": priority,
+            "audio": sim.audio,
+            "image": sim.image,
+            "reasoning": reasoning
+        })
 
     return results
 
-if __name__ == "__main__":
-
-    results = evaluate_all()
-
-    for c in results:
-
-        print(f"ID: {c.id}")
-
-        print(f"Priority: {c.priority}")
-
-        print(f"Reasoning: {c.reasoning}")
-
-        print("-" * 30)
+print(evaluate_all())
