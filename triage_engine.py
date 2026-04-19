@@ -362,3 +362,4 @@ def get_priority_and_reasoning(casualty: Casualty) -> tuple[str, str]:
     """
     result = get_priority_with_reasoning(casualty)
     return {'red': 1, 'yellow': 2, 'green': 3}[result['priority']], result['reasoning']
+

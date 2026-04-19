@@ -40,6 +40,7 @@ def get_casualties():
     return casualties
 
 
+
 def sim_to_real(sim):
     return Casualty(
         casualty_id=sim.id,
