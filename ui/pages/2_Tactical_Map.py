@@ -22,7 +22,7 @@ from scenario_ranker import rank_roster
 from schema import AISuggestion, Casualty, TriageCategory
 from shared.state import app_state
 from scripts.seed_fake_data import seed
-from triage_engine import get_priority_with_reasoning, start_triage_engine
+from triage_engine import start_triage_engine
 from ui.components.controls import controls
 from ui.components.simulation_seeder import get_simulation_assets, resolve_sim_asset
 from ui.theme import (
@@ -266,8 +266,17 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 }}
 
 .map-card svg {{
+    display: block;
+}}
+
+.map-shell {{
     width: 100%;
-    height: auto;
+    aspect-ratio: 1000 / 600;
+}}
+
+.map-shell svg {{
+    width: 100%;
+    height: 100%;
     display: block;
     border-radius: 12px;
 }}
@@ -513,8 +522,8 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 }}
 
 .rationale-copy {{
-    font-size: 0.86rem;
-    line-height: 1.55;
+    font-size: 13px;
+    line-height: 1.6;
     margin-top: 0.45rem;
 }}
 
@@ -607,43 +616,74 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 }}
 
 .queue-row {{
-    gap: 0.75rem;
+    position: relative;
+    gap: 10px;
+    padding: 10px;
+    min-width: 0;
+    border-top: 1px solid #E8E4D8;
+}}
+
+.queue-row,
+.queue-row * {{
+    word-break: normal;
+    overflow-wrap: break-word;
 }}
 
 .queue-row.top {{
     background: rgba(184, 130, 15, 0.06);
     border-radius: 12px;
-    padding: 0.75rem 0.65rem;
-    margin-bottom: 0.3rem;
+}}
+
+.queue-row:first-of-type {{
+    border-top: 0;
 }}
 
 .queue-row.selected {{
     outline: 1px solid rgba(184, 130, 15, 0.45);
     outline-offset: -1px;
     border-radius: 12px;
-    padding-left: 0.55rem;
-    padding-right: 0.55rem;
 }}
 
 .queue-rank {{
-    width: 1.5rem;
-    color: var(--text-muted);
+    flex: 0 0 28px;
+    padding-right: 10px;
+    color: #7A7668;
     font-family: var(--font-mono);
-    font-size: 0.88rem;
+    font-size: 14px;
     letter-spacing: 0.12em;
+    line-height: 1.25;
 }}
 
-.queue-id {{
+.queue-dot {{
+    flex: 0 0 12px;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    margin-top: 3px;
+}}
+
+.queue-main {{
+    flex: 1 1 auto;
+    min-width: 0;
+}}
+
+.queue-name {{
     font-family: var(--font-serif);
-    font-size: 1rem;
-    line-height: 1.15;
+    font-size: 16px;
+    line-height: 1.2;
+    white-space: normal;
 }}
 
-.queue-concern {{
+.queue-summary {{
     color: var(--text-muted);
-    font-size: 0.76rem;
-    line-height: 1.4;
-    margin-top: 0.15rem;
+    font-size: 11px;
+    line-height: 1.45;
+    margin-top: 0.18rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: normal;
 }}
 
 .queue-select,
@@ -661,14 +701,21 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
     transition: all 120ms ease;
 }}
 
+.queue-select {{
+    flex: 0 0 70px;
+    width: 70px;
+    min-width: 70px;
+    align-self: center;
+    padding: 0.38rem 0.55rem;
+}}
+
 .queue-select:hover,
 .zone-select:hover {{
     background: rgba(184, 130, 15, 0.06);
     border-color: var(--gold);
 }}
 
-.empty-panel,
-.placeholder-box {{
+.empty-panel {{
     color: var(--text-muted);
     min-height: 160px;
     display: flex;
@@ -678,6 +725,66 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
     border: 1px dashed rgba(184, 130, 15, 0.25);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.32);
+}}
+
+.medic-feed-empty {{
+    margin-top: 0.6rem;
+    min-height: 280px;
+    height: 280px;
+    border: 1px solid #E8E4D8;
+    border-radius: 12px;
+    background: #FAFAF6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 1.25rem;
+}}
+
+.medic-feed-empty-inner {{
+    max-width: 260px;
+}}
+
+.medic-feed-glyph {{
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(122, 118, 104, 0.4);
+    margin-bottom: 0.55rem;
+}}
+
+.medic-feed-kicker {{
+    font-family: var(--font-mono);
+    font-size: 14px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #7A7668;
+}}
+
+.medic-feed-copy {{
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #7A7668;
+}}
+
+@media (max-width: 1180px) {{
+    .queue-select {{
+        flex-basis: 64px;
+        width: 64px;
+        min-width: 64px;
+    }}
+}}
+
+@media (max-width: 900px) {{
+    .map-shell {{
+        aspect-ratio: auto;
+    }}
+
+    .map-shell svg {{
+        height: auto;
+    }}
 }}
 
 .placeholder-box {{
@@ -1048,6 +1155,18 @@ def _diagnosis_text(casualty_id: str, simulation_assets: dict[str, dict]) -> str
     return str(simulation_assets.get(casualty_id, {}).get("diagnosis", "") or "").strip()
 
 
+def _reasoning_text(casualty_id: str, simulation_assets: dict[str, dict]) -> str:
+    reasoning = simulation_assets.get(casualty_id, {}).get("reasoning")
+    if reasoning is None:
+        return ""
+    if isinstance(reasoning, str):
+        return reasoning.strip()
+    if isinstance(reasoning, (list, tuple, set)):
+        parts = [str(part).strip() for part in reasoning if str(part).strip()]
+        return " ".join(parts)
+    return str(reasoning).strip()
+
+
 def _top_concern(casualty: Casualty, pending_by_casualty: dict[str, list[SuggestionView]], simulation_assets: dict[str, dict]) -> str:
     top_suggestion = _top_suggestion(casualty, pending_by_casualty)
     if top_suggestion is not None:
@@ -1378,7 +1497,8 @@ def _map_svg(
         )
 
     svg_markup = f"""
-    <svg viewBox="0 0 {MAP_WIDTH} {MAP_HEIGHT}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AEGIS tactical map">
+    <div class="map-shell">
+    <svg width="100%" viewBox="0 0 {MAP_WIDTH} {MAP_HEIGHT}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AEGIS tactical map">
         {_terrain_pattern()}
         <rect x="0" y="0" width="{MAP_WIDTH}" height="{MAP_HEIGHT}" fill="{BACKGROUND}" />
         <rect x="0" y="0" width="{MAP_WIDTH}" height="{MAP_HEIGHT}" fill="url(#terrainPattern)" />
@@ -1404,6 +1524,7 @@ def _map_svg(
         <text class="map-footer" x="24" y="578">{timestamp}</text>
         <text class="map-footer" x="976" y="578" text-anchor="end" fill="{GOLD}">AEGIS ◆</text>
     </svg>
+    </div>
     """
     return re.sub(r">\s+<", "><", svg_markup).strip()
 
@@ -1423,10 +1544,10 @@ def _queue_html(ranked_rows: list[dict], selected_id: str | None) -> str:
             f"""
             <div class="{' '.join(classes)}">
                 <div class="queue-rank">{int(row["rank"]):02d}</div>
-                <div class="triage-dot" style="background:{fill};border:1.5px solid {style["stroke"]};margin-top:0.24rem;"></div>
-                <div style="flex:1 1 auto;min-width:0;">
-                    <div class="queue-id">{html.escape(str(row["casualty_id"]))}</div>
-                    <div class="queue-concern">{html.escape(str(row["top_concern"]))}</div>
+                <div class="queue-dot" style="background:{fill};border:1.5px solid {style["stroke"]};"></div>
+                <div class="queue-main">
+                    <div class="queue-name">{html.escape(str(row["casualty_id"]))}</div>
+                    <div class="queue-summary">{html.escape(str(row["top_concern"]))}</div>
                 </div>
                 <a class="queue-select" href="{_selection_link(str(row["casualty_id"]))}" target="_self">SELECT</a>
             </div>
@@ -1441,7 +1562,7 @@ def _queue_html(ranked_rows: list[dict], selected_id: str | None) -> str:
         <div>
             <div class="queue-title">PRIORITY</div>
             <div class="queue-subtitle" style="margin-top:0.35rem;margin-bottom:0.8rem;">LIVE RANKING</div>
-            {''.join(rows)}
+            <div class="queue-list">{''.join(rows)}</div>
         </div>
         """
     )
@@ -1515,9 +1636,20 @@ def _render_medic_panel(
 
     frame = app_state.get_latest_frame()
     if frame is not None:
-        st.image(frame, width="stretch")
+        st.image(frame, channels="BGR", width="stretch")
     else:
-        st.markdown('<div class="placeholder-box">No live frame in shared state yet.</div>', unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="medic-feed-empty">
+                <div class="medic-feed-empty-inner">
+                    <div class="medic-feed-glyph">AEGIS ◆</div>
+                    <div class="medic-feed-kicker">NO LIVE FEED</div>
+                    <div class="medic-feed-copy">Start Demo Mode or Live Vision on the dashboard to see the medic&apos;s POV.</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown('<div class="detail-divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="detail-kicker">ZONE ROSTER</div>', unsafe_allow_html=True)
@@ -1573,6 +1705,7 @@ def _render_casualty_panel(
     audio_path = _simulation_asset(casualty.casualty_id, simulation_assets, "audio")
     image_path = _simulation_asset(casualty.casualty_id, simulation_assets, "image")
     diagnosis = _diagnosis_text(casualty.casualty_id, simulation_assets)
+    reasoning = _reasoning_text(casualty.casualty_id, simulation_assets)
 
     st.markdown(
         f"""
@@ -1629,6 +1762,9 @@ def _render_casualty_panel(
         st.markdown(f'<div class="italic-diagnosis">{html.escape(diagnosis)}</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="detail-copy">No simulation diagnosis attached.</div>', unsafe_allow_html=True)
+    if reasoning:
+        st.markdown('<div class="detail-kicker" style="margin-top:0.9rem;">TRIAGE RATIONALE</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="rationale-copy">{html.escape(reasoning)}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="detail-kicker" style="margin-top:1rem;">INTERVENTIONS</div>', unsafe_allow_html=True)
     st.markdown(_interventions_html(casualty), unsafe_allow_html=True)
@@ -1647,17 +1783,6 @@ def _render_casualty_panel(
     )
     if casualty.medic_notes:
         st.markdown(f'<div class="note-copy">{html.escape(casualty.medic_notes)}</div>', unsafe_allow_html=True)
-
-    try:
-        rationale = get_priority_with_reasoning(casualty)
-    except Exception:
-        rationale = None
-    if rationale and rationale.get("reasoning"):
-        st.markdown('<div class="detail-kicker" style="margin-top:1rem;">RATIONALE</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="rationale-copy">{html.escape(str(rationale["reasoning"]))}</div>',
-            unsafe_allow_html=True,
-        )
 
 
 def _render_detail_panel(
@@ -1702,7 +1827,7 @@ def render_tactical_map() -> None:
     selected_id = _sync_selection({casualty.casualty_id for casualty in casualties}, medic_ids)
     ranked_rows = _ranked_roster(casualties, pending_by_casualty, simulation_assets)
 
-    map_col, detail_col, queue_col = st.columns([5, 3, 2], gap="large")
+    map_col, detail_col, queue_col = st.columns([7, 4, 3], gap="large")
 
     with map_col:
         with st.container(border=True):
