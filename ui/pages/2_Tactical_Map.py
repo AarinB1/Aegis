@@ -725,11 +725,11 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 
 .queue-row {{
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
+    grid-template-columns: 46px minmax(0, 1fr) 72px;
+    align-items: start;
     position: relative;
-    column-gap: 0.8rem;
-    padding: 0.82rem 0.88rem;
+    column-gap: 0.7rem;
+    padding: 0.76rem 0.8rem;
     min-width: 0;
     border: 1px solid rgba(232, 228, 216, 0.95);
     border-radius: 14px;
@@ -756,15 +756,17 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 .queue-leading {{
     display: inline-flex;
     align-items: center;
-    gap: 0.65rem;
-    min-width: max-content;
+    justify-content: flex-start;
+    gap: 0.45rem;
+    min-width: 46px;
+    padding-top: 0.08rem;
 }}
 
 .queue-rank {{
     min-width: 2ch;
     color: #7A7668;
     font-family: var(--font-mono);
-    font-size: 14px;
+    font-size: 13px;
     letter-spacing: 0.12em;
     line-height: 1;
     text-align: right;
@@ -779,15 +781,18 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 .queue-main {{
     min-width: 0;
     display: grid;
-    gap: 0.2rem;
+    gap: 0.16rem;
+    padding-right: 0.1rem;
 }}
 
 .queue-name {{
     font-family: var(--font-sans);
-    font-size: 15px;
-    line-height: 1.25;
+    font-size: 14px;
+    line-height: 1.18;
     font-weight: 600;
-    white-space: normal;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     word-break: keep-all;
     overflow-wrap: normal;
 }}
@@ -795,22 +800,24 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 .queue-track {{
     color: var(--text-muted);
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 9px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }}
 
 .queue-summary {{
     color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1.45;
+    font-size: 10px;
+    line-height: 1.38;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     white-space: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
 }}
 
 .queue-select,
@@ -829,16 +836,21 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 }}
 
 .queue-select {{
-    min-width: 78px;
+    width: 72px;
+    min-width: 72px;
     justify-self: end;
     align-self: center;
-    padding: 0.42rem 0.68rem;
+    padding: 0.38rem 0.52rem;
 }}
 
 .queue-select:hover,
 .zone-select:hover {{
     background: rgba(184, 130, 15, 0.06);
     border-color: var(--gold);
+}}
+
+.right-rail-gap {{
+    height: 0.85rem;
 }}
 
 .empty-panel {{
@@ -920,7 +932,8 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div {{
 
 @media (max-width: 1180px) {{
     .queue-select {{
-        min-width: 72px;
+        width: 68px;
+        min-width: 68px;
     }}
 }}
 
@@ -2079,7 +2092,7 @@ def render_tactical_map() -> None:
     selected_id = _sync_selection({casualty.casualty_id for casualty in casualties}, medic_ids)
     ranked_rows = _ranked_roster(casualties, pending_by_casualty, simulation_assets)
 
-    map_col, detail_col, queue_col = st.columns([9.8, 3.9, 3.5], gap="small")
+    map_col, rail_col = st.columns([8.8, 5.2], gap="small")
 
     with map_col:
         with st.container(border=True):
@@ -2102,10 +2115,9 @@ def render_tactical_map() -> None:
                 unsafe_allow_html=True,
             )
 
-    with detail_col:
+    with rail_col:
         _render_detail_panel(selected_id, casualties, ranked_rows, pending_by_casualty, simulation_assets)
-
-    with queue_col:
+        st.markdown('<div class="right-rail-gap"></div>', unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(_queue_html(ranked_rows, selected_id), unsafe_allow_html=True)
 
