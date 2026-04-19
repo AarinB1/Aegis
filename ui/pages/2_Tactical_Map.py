@@ -90,15 +90,6 @@ LOCAL_PRIORITY_RANK = {
     TriageCategory.DECEASED: 5,
 }
 
-PRIORITY_VALUE_TO_CATEGORY = {
-    "red": TriageCategory.IMMEDIATE,
-    "yellow": TriageCategory.DELAYED,
-    "green": TriageCategory.MINIMAL,
-    "white": TriageCategory.UNASSESSED,
-    "gray": TriageCategory.EXPECTANT,
-    "black": TriageCategory.DECEASED,
-}
-
 STYLE_BLOCK = f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
@@ -1099,6 +1090,22 @@ def _pretty_text(value: str) -> str:
     return str(value or "").replace("_", " ").strip().title()
 
 
+def _canonical_triage_category(casualty: Casualty) -> TriageCategory:
+    category = getattr(casualty, "triage_category", None)
+    if isinstance(category, TriageCategory):
+        return category
+    if isinstance(category, str):
+        normalized = category.strip()
+        if normalized:
+            upper = normalized.upper()
+            if upper in TriageCategory.__members__:
+                return TriageCategory[upper]
+            for triage_category in TriageCategory:
+                if normalized.lower() == triage_category.value.lower():
+                    return triage_category
+    return TriageCategory.UNASSESSED
+
+
 def _triage_fill(category: TriageCategory) -> str:
     style = TRIAGE_MARK_STYLES.get(category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])
     return GRAY if style["fill"] == "none" else str(style["fill"])
@@ -1403,6 +1410,20 @@ def _top_confidence(casualty: Casualty, pending_by_casualty: dict[str, list[Sugg
     return _format_percent(top_suggestion.confidence)
 
 
+def _finalize_queue_rows(rows: list[dict]) -> list[dict]:
+    rows.sort(
+        key=lambda row: (
+            LOCAL_PRIORITY_RANK.get(row["category"], 99),
+            int(row.get("ranker_rank", 9_999)),
+            -float(row.get("confidence") or 0.0),
+            str(row["casualty_id"]),
+        )
+    )
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+    return rows
+
+
 def _medic_zone_concern(
     medic_id: str,
     casualty: Casualty,
@@ -1411,7 +1432,7 @@ def _medic_zone_concern(
     simulation_assets: dict[str, dict],
 ) -> str:
     ranked_row = ranked_lookup.get(casualty.casualty_id, {})
-    triage_category = ranked_row.get("category", casualty.triage_category)
+    triage_category = _canonical_triage_category(casualty)
     triage_text = triage_label(triage_category)
     confidence = int(ranked_row.get("confidence") and _format_percent(ranked_row.get("confidence")) or _top_confidence(casualty, pending_by_casualty))
     wound_count = len(casualty.wounds)
@@ -1458,7 +1479,8 @@ def _tooltip_html(
     concern = _truncate(concern or "Awaiting assessment", 80)
     confidence = _top_confidence(casualty, pending_by_casualty)
     audio_path, _ = _audio_asset_info(casualty, simulation_assets)
-    triage = triage_label(casualty.triage_category)
+    triage_category = _canonical_triage_category(casualty)
+    triage = triage_label(triage_category)
     tooltip_title = html.escape(casualty.casualty_id)
     audio_badge = '<div class="tooltip-audio">🎧 CLIP AVAILABLE</div>' if audio_path else ""
     title_text = html.escape(f"{casualty.casualty_id} · {triage} · {concern}")
@@ -1466,7 +1488,7 @@ def _tooltip_html(
     <foreignObject class="tooltip-fo" x="{tooltip_x}" y="{tooltip_y}" width="232" height="110">
         <div xmlns="http://www.w3.org/1999/xhtml" class="tooltip-card">
             <div class="tooltip-title">{tooltip_title}</div>
-            <div class="tooltip-triage">{_triage_dot_html(casualty.triage_category)}{html.escape(triage)}</div>
+            <div class="tooltip-triage">{_triage_dot_html(triage_category)}{html.escape(triage)}</div>
             <div class="tooltip-copy">{html.escape(concern)}</div>
             <div class="tooltip-meta">AI · {confidence}%</div>
             {audio_badge}
@@ -1526,14 +1548,6 @@ def _nearest_medic(position: tuple[int, int]) -> tuple[dict[str, object], float]
     )
 
 
-def _category_from_ranker(priority_value: object, casualty: Casualty) -> TriageCategory:
-    if isinstance(priority_value, TriageCategory):
-        return priority_value
-    if isinstance(priority_value, str):
-        return PRIORITY_VALUE_TO_CATEGORY.get(priority_value.lower(), casualty.triage_category)
-    return casualty.triage_category
-
-
 def _fallback_ranking(
     casualties: list[Casualty],
     pending_by_casualty: dict[str, list[SuggestionView]],
@@ -1545,21 +1559,13 @@ def _fallback_ranking(
         rows.append(
             {
                 "casualty_id": casualty.casualty_id,
-                "category": casualty.triage_category,
+                "category": _canonical_triage_category(casualty),
                 "confidence": top_suggestion.confidence if top_suggestion else 0.0,
-                "top_concern": _top_concern(casualty, pending_by_casualty, simulation_assets),
+                "top_concern": _truncate(_top_concern(casualty, pending_by_casualty, simulation_assets), 76),
+                "ranker_rank": 9_999,
             }
         )
-    rows.sort(
-        key=lambda row: (
-            LOCAL_PRIORITY_RANK.get(row["category"], 99),
-            -float(row["confidence"] or 0.0),
-            str(row["casualty_id"]),
-        )
-    )
-    for index, row in enumerate(rows, start=1):
-        row["rank"] = index
-    return rows
+    return _finalize_queue_rows(rows)
 
 
 def _ranked_roster(
@@ -1604,23 +1610,19 @@ def _ranked_roster(
         casualty = casualty_map.get(str(item.get("casualty_id")))
         if casualty is None:
             continue
-        concern = str(item.get("reasoning", "") or "").strip()
-        concern = _strip_casualty_prefix(concern, casualty.casualty_id)
-        if not concern:
-            concern = _top_concern(casualty, pending_by_casualty, simulation_assets)
         rows.append(
             {
-                "rank": index,
                 "casualty_id": casualty.casualty_id,
-                "category": _category_from_ranker(item.get("priority"), casualty),
+                "category": _canonical_triage_category(casualty),
                 "confidence": float(item.get("confidence", 0.0) or 0.0),
-                "top_concern": _truncate(concern, 76),
+                "top_concern": _truncate(_top_concern(casualty, pending_by_casualty, simulation_assets), 76),
+                "ranker_rank": index,
             }
         )
 
     if not rows:
         return _fallback_ranking(casualties, pending_by_casualty, simulation_assets)
-    return rows
+    return _finalize_queue_rows(rows)
 
 
 def _map_svg(
@@ -1638,7 +1640,8 @@ def _map_svg(
         TriageCategory.MINIMAL: 0,
     }
     for casualty in casualties:
-        counts[casualty.triage_category] = counts.get(casualty.triage_category, 0) + 1
+        triage_category = _canonical_triage_category(casualty)
+        counts[triage_category] = counts.get(triage_category, 0) + 1
 
     timestamp = datetime.now().astimezone().strftime("%H:%M:%S")
     status_text = (
@@ -1654,6 +1657,7 @@ def _map_svg(
 
     for casualty in casualties:
         x, y = positions[casualty.casualty_id]
+        triage_category = _canonical_triage_category(casualty)
         medic, distance = _nearest_medic((x, y))
         line_color = GOLD
         line_opacity = "0.3"
@@ -1668,12 +1672,12 @@ def _map_svg(
         )
 
         label_y = y - 20
-        category_style = TRIAGE_MARK_STYLES.get(casualty.triage_category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])
+        category_style = TRIAGE_MARK_STYLES.get(triage_category, TRIAGE_MARK_STYLES[TriageCategory.UNASSESSED])
         pulse_ring = ""
         selected_ring = ""
         ping_ring = ""
         priority_reticle = ""
-        if casualty.triage_category == TriageCategory.UNASSESSED:
+        if triage_category == TriageCategory.UNASSESSED:
             marker = (
                 f'<circle cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="none" stroke="#FAFAF6" stroke-width="4.5" />'
                 f'<circle cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="none" stroke="{category_style["stroke"]}" stroke-width="2.2" />'
@@ -1682,7 +1686,7 @@ def _map_svg(
             marker = (
                 f'<circle cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="{category_style["fill"]}" stroke="#FAFAF6" stroke-width="2.3" />'
             )
-        if casualty.triage_category == TriageCategory.IMMEDIATE:
+        if triage_category == TriageCategory.IMMEDIATE:
             pulse_ring = f'<circle class="pulse-ring" cx="{x}" cy="{y}" r="{CASUALTY_MARKER_RADIUS}" fill="none" stroke="{RED}" stroke-width="1.7" />'
 
         latest_suggestion = _latest_suggestion_time(casualty, pending_by_casualty)
@@ -1724,7 +1728,7 @@ def _map_svg(
                     {ping_ring}
                     {selected_ring}
                     {marker}
-                    <text class="map-label" x="{x}" y="{label_y}" text-anchor="middle">{html.escape(casualty.casualty_id)} · {html.escape(triage_label(casualty.triage_category))}</text>
+                    <text class="map-label" x="{x}" y="{label_y}" text-anchor="middle">{html.escape(casualty.casualty_id)} · {html.escape(triage_label(triage_category))}</text>
                 </a>
                 {_tooltip_html(casualty, x, y, pending_by_casualty, simulation_assets)}
             </g>
@@ -1794,7 +1798,10 @@ def _queue_html(ranked_rows: list[dict], selected_id: str | None) -> str:
         if row["casualty_id"] == selected_id:
             classes.append("selected")
         track_label = _queue_track_label(str(row["casualty_id"]))
-        track_markup = f'<div class="queue-track">{html.escape(track_label)}</div>' if track_label else ""
+        meta_parts = [triage_label(category)]
+        if track_label:
+            meta_parts.append(track_label)
+        track_markup = f'<div class="queue-track">{html.escape(" · ".join(meta_parts))}</div>'
         rows.append(
             f"""
             <div class="{' '.join(classes)}">
@@ -1819,7 +1826,7 @@ def _queue_html(ranked_rows: list[dict], selected_id: str | None) -> str:
         f"""
         <div>
             <div class="queue-title">ACTION QUEUE</div>
-            <div class="queue-subtitle" style="margin-top:0.35rem;margin-bottom:0.8rem;">WHO NEEDS ATTENTION FIRST</div>
+            <div class="queue-subtitle" style="margin-top:0.35rem;margin-bottom:0.8rem;">CANONICAL TRIAGE FIRST / AI BREAKS TIES</div>
             <div class="queue-list">{''.join(rows)}</div>
         </div>
         """
@@ -1925,7 +1932,7 @@ def _render_medic_panel(
             zone_rows.append(
                 f"""
                 <div class="zone-row">
-                    {_triage_dot_html(casualty.triage_category)}
+                    {_triage_dot_html(_canonical_triage_category(casualty))}
                     <div style="flex:1 1 auto;min-width:0;">
                         <div class="queue-id" style="font-size:0.95rem;">{html.escape(casualty.casualty_id)}</div>
                         <div class="queue-concern">{html.escape(concern)}</div>
@@ -1958,6 +1965,7 @@ def _render_casualty_panel(
     simulation_assets: dict[str, dict],
 ) -> None:
     rank_display = rank_lookup.get(casualty.casualty_id)
+    triage_category = _canonical_triage_category(casualty)
     vision_rows = _casualty_suggestions(casualty, pending_by_casualty, source="vision")
     audio_rows = _casualty_suggestions(casualty, pending_by_casualty, source="audio")
     audio_path, audio_label = _audio_asset_info(casualty, simulation_assets)
@@ -1968,7 +1976,7 @@ def _render_casualty_panel(
     st.markdown(
         f"""
         <div class="detail-title">Casualty {html.escape(casualty.casualty_id)}</div>
-        <div class="identity-line">{_triage_dot_html(casualty.triage_category)}{html.escape(triage_label(casualty.triage_category))}</div>
+        <div class="identity-line">{_triage_dot_html(triage_category)}{html.escape(triage_label(triage_category))}</div>
         <div class="mono-line">LAST SEEN · {_format_timestamp(casualty.last_seen)}</div>
         <div class="detail-rank">Priority Rank · #{rank_display if rank_display is not None else "-"}</div>
         """,
@@ -2033,8 +2041,8 @@ def _render_casualty_panel(
     st.markdown('<div class="detail-kicker" style="margin-top:1rem;">INTERVENTIONS</div>', unsafe_allow_html=True)
     st.markdown(_interventions_html(casualty), unsafe_allow_html=True)
 
-    live_color = TEXT_PRIMARY if casualty.triage_category == TriageCategory.DECEASED else GREEN
-    live_label = "DECEASED" if casualty.triage_category == TriageCategory.DECEASED else "ALIVE"
+    live_color = TEXT_PRIMARY if triage_category == TriageCategory.DECEASED else GREEN
+    live_label = "DECEASED" if triage_category == TriageCategory.DECEASED else "ALIVE"
     march_total = sum(1 for value in casualty.march_checklist.values() if bool(value))
     st.markdown(
         f"""
