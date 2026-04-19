@@ -159,8 +159,12 @@ header[data-testid="stHeader"] {{
     border-right: 1px solid var(--border);
 }}
 
+[data-testid="stSidebarNav"] {{
+    display: none !important;
+}}
+
 [data-testid="stSidebar"] .block-container {{
-    padding-top: 1.25rem;
+    padding-top: 3.4rem;
     padding-left: 1rem;
     padding-right: 1rem;
 }}
