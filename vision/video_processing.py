@@ -7,6 +7,7 @@ from typing import Any, Optional, Tuple
 import cv2
 
 from vision.contracts import SceneSummary, VideoAnalysisResult, VideoFrameResult, WoundAnalysisResult, WoundRecord
+from vision.demo_profiles import DemoVideoProfile, get_demo_profile_for_frame_shape
 from vision.render import draw_wounds
 from vision.state_bridge import VisionStateBridge
 from vision.summary import build_scene_summary, empty_scene_summary, summarize_analysis, summarize_video_frames
@@ -38,15 +39,16 @@ class VideoProcessor:
         )
         self.last_result: dict | None = None
         self._attention_memory: dict[str, float] = {}
+        self._current_demo_profile: DemoVideoProfile | None = None
 
     def recv(self, frame) -> cv2.typing.MatLike:
         work_frame = self._prepare_frame(frame)
         timestamp = time.time()
         rois_xywh = self.analyzer.detect_person_rois(work_frame)
-        detections_xyxy = [self._xywh_to_xyxy(roi) for roi in rois_xywh]
-        tracks = self.tracker.update(detections_xyxy, timestamp=timestamp)
-
         analysis = self.analyzer.analyze_image(work_frame, pixels_per_cm=self.pixels_per_cm)
+        self._current_demo_profile = self._resolve_demo_profile(work_frame)
+        detections_xyxy = self._candidate_detections(rois_xywh, analysis, work_frame.shape[:2])
+        tracks = self.tracker.update(detections_xyxy, timestamp=timestamp)
         analysis = self._stabilize_analysis(analysis, track_count=len(tracks))
         casualties = self._build_casualties(tracks, analysis)
         scene_summary = self._build_scene_summary(casualties)
@@ -189,6 +191,7 @@ class VideoProcessor:
         self.state_bridge.reset()
         self.last_result = None
         self._attention_memory.clear()
+        self._current_demo_profile = None
 
     def _prepare_frame(self, frame_bgr: cv2.typing.MatLike):
         if self.analysis_roi is None:
@@ -228,7 +231,8 @@ class VideoProcessor:
                     },
                 }
             )
-        return self._rank_casualties(casualties)
+        casualties = self._rank_casualties(casualties)
+        return self._filter_publishable_casualties(casualties)
 
     def _stabilize_analysis(self, analysis: dict, *, track_count: int) -> dict:
         if self.last_result is None:
@@ -452,6 +456,115 @@ class VideoProcessor:
         x, y, w, h = bbox
         return (x, y, x + w, y + h)
 
+    def _resolve_demo_profile(self, frame_bgr: cv2.typing.MatLike) -> DemoVideoProfile | None:
+        analyzer_profile = getattr(self.analyzer, "last_demo_profile", None)
+        if callable(analyzer_profile):
+            profile = analyzer_profile()
+            if profile is not None:
+                return profile
+        return get_demo_profile_for_frame_shape(frame_bgr.shape[:2])
+
+    def _candidate_detections(
+        self,
+        rois_xywh: list[tuple[int, int, int, int]],
+        analysis: dict,
+        frame_shape: tuple[int, int],
+    ) -> list[tuple[int, int, int, int]]:
+        roi_detections = [self._xywh_to_xyxy(roi) for roi in rois_xywh]
+        if roi_detections and self._person_detection_reliable():
+            return roi_detections
+        fallback = self._fallback_detections_from_wounds(analysis, frame_shape)
+        return fallback or roi_detections
+
+    def _person_detection_reliable(self) -> bool:
+        person_detection = getattr(self.analyzer, "last_person_detection_reliable", None)
+        if callable(person_detection):
+            return bool(person_detection())
+        return True
+
+    def _fallback_detections_from_wounds(
+        self,
+        analysis: dict,
+        frame_shape: tuple[int, int],
+    ) -> list[tuple[int, int, int, int]]:
+        frame_height, frame_width = int(frame_shape[0]), int(frame_shape[1])
+        detections: list[tuple[int, int, int, int]] = []
+        wounds = list(analysis.get("wounds", []))
+        wounds.sort(
+            key=lambda wound: (
+                wound.get("bleeding", False),
+                wound.get("confidence", 0.0),
+                wound.get("severity", 0.0),
+                wound.get("size_cm2", 0.0),
+            ),
+            reverse=True,
+        )
+        max_casualties = self._current_demo_profile.max_casualties if self._current_demo_profile else None
+        for wound in wounds:
+            location = wound.get("location") or {}
+            x = int(location.get("x", 0))
+            y = int(location.get("y", 0))
+            width = int(location.get("width", 0))
+            height = int(location.get("height", 0))
+            if width <= 0 or height <= 0:
+                continue
+            pad_x = max(int(width * 1.6), 48)
+            pad_y = max(int(height * 1.9), 64)
+            x1 = max(0, x - pad_x)
+            y1 = max(0, y - pad_y)
+            x2 = min(frame_width, x + width + pad_x)
+            y2 = min(frame_height, y + height + pad_y)
+            bbox = (x1, y1, x2, y2)
+            if any(self._xyxy_iou(bbox, kept) >= 0.32 for kept in detections):
+                continue
+            detections.append(bbox)
+            if max_casualties is not None and len(detections) >= max_casualties:
+                break
+        return detections
+
+    def _filter_publishable_casualties(self, casualties: list[dict]) -> list[dict]:
+        if not casualties:
+            return casualties
+        casualties = [casualty for casualty in casualties if casualty["analysis"]["wound_count"] > 0]
+        if not casualties:
+            return []
+
+        profile = self._current_demo_profile
+        if profile is None:
+            return casualties
+
+        publishable = [
+            casualty
+            for casualty in casualties
+            if casualty["analysis"]["confidence"] >= profile.publish_confidence_floor
+            and casualty["analysis"]["overall_severity"] >= profile.publish_severity_floor
+        ]
+        ranked = publishable or casualties[:1]
+        if profile.max_casualties is not None:
+            ranked = ranked[: profile.max_casualties]
+        return ranked
+
+    def _xyxy_iou(
+        self,
+        box_a: tuple[int, int, int, int],
+        box_b: tuple[int, int, int, int],
+    ) -> float:
+        ax1, ay1, ax2, ay2 = box_a
+        bx1, by1, bx2, by2 = box_b
+        inter_x1 = max(ax1, bx1)
+        inter_y1 = max(ay1, by1)
+        inter_x2 = min(ax2, bx2)
+        inter_y2 = min(ay2, by2)
+        if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+            return 0.0
+        inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+        area_a = max((ax2 - ax1) * (ay2 - ay1), 1)
+        area_b = max((bx2 - bx1) * (by2 - by1), 1)
+        return inter_area / max(area_a + area_b - inter_area, 1)
+
+    def _hide_track_overlay(self) -> bool:
+        return bool(self._current_demo_profile and self._current_demo_profile.hide_track_overlay)
+
     def _draw_track_overlay(
         self,
         frame_bgr: cv2.typing.MatLike,
@@ -490,12 +603,13 @@ class VideoProcessor:
         stale: bool = False,
     ):
         annotated_frame = draw_wounds(frame_bgr, analysis)
-        for casualty in casualties:
-            annotated_frame = self._draw_track_overlay(
-                annotated_frame,
-                casualty,
-                focus_alias=scene_summary.top_casualty_alias,
-            )
+        if not self._hide_track_overlay():
+            for casualty in casualties:
+                annotated_frame = self._draw_track_overlay(
+                    annotated_frame,
+                    casualty,
+                    focus_alias=scene_summary.top_casualty_alias,
+                )
         annotated_frame = self._draw_scene_overlay(
             annotated_frame,
             frame_index=frame_index,
